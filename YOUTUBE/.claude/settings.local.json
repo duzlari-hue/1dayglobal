@@ -1,0 +1,18 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(python -c ':*)",
+      "Bash(python -c \"import edge_tts, asyncio; async def f\\(\\): voices = await edge_tts.list_voices\\(\\); [print\\(v['ShortName'], v['Gender']\\) for v in voices if 'uz' in v['ShortName'].lower\\(\\)]; asyncio.run\\(f\\(\\)\\)\")",
+      "Bash(git -C \"C:/PROEKTS/1DAYGLOBAL\" status)",
+      "Bash(git -C \"C:/PROEKTS/1DAYGLOBAL/YOUTUBE\" status)",
+      "Bash(git -C \"C:/PROEKTS/1DAYGLOBAL/TELEGRAM\" status)",
+      "Bash(dir \"C:\\\\PROEKTS\" /b)",
+      "Bash(dir \"C:\\\\PROEKTS\\\\1DAYGLOBAL\" /b)",
+      "Bash(git -C \"C:/PROEKTS/1kun-v3\" status)",
+      "Bash(git -C \"C:/PROEKTS/1DAYGLOBAL\" init)",
+      "Bash(git -C \"C:/PROEKTS/1DAYGLOBAL\" remote add origin https://github.com/duzlari-hue/1dayglobal.git)",
+      "Bash(git -C \"C:/PROEKTS/1DAYGLOBAL\" add -A)",
+      "Bash(git -C \"C:/PROEKTS/1DAYGLOBAL\" status --short)"
+    ]
+  }
+}

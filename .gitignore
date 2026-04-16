@@ -1,0 +1,54 @@
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.egg-info/
+dist/
+build/
+*.egg
+
+# Environment
+.env
+*.env
+*.env.*
+
+# API keys / credentials
+*credentials*.json
+*token*.json
+*secret*.json
+client_secrets.json
+youtube_cookies.txt
+*.txt.txt
+
+# Output / temp
+output/
+TEMP/
+temp/
+*.mp4
+*.mp3
+*.wav
+*.webm
+*.jpg
+*.jpeg
+*.png
+*.webp
+
+# Logs
+*.log
+logs/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Queue files (runtime)
+output/youtube_queue/
+output/videos/
