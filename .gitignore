@@ -49,6 +49,10 @@ desktop.ini
 .idea/
 *.swp
 
+# Claude local settings (may contain tokens)
+.claude/
+**/.claude/
+
 # Queue files (runtime)
 output/youtube_queue/
 output/videos/
