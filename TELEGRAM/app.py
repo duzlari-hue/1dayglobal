@@ -115,6 +115,11 @@ def run_pipeline():
             "keywords_en":    d.get("keywords_en", []),
             "search_queries": d.get("search_queries", []),
             "shot_list":      d.get("shot_list", []),
+            "hook": {
+                "uz": d.get("hook_uz", ""),
+                "ru": d.get("hook_ru", ""),
+                "en": d.get("hook_en", ""),
+            },
             "location": {
                 "uz": d.get("location_uz", ""),
                 "ru": d.get("location_ru", ""),

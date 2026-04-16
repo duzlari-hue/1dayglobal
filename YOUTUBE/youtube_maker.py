@@ -1864,6 +1864,310 @@ def upload_to_youtube(youtube, video_file, title, description, tags):
     return video_id
 
 
+# ══════════════════════════════════════════════════════════════
+# THUMBNAIL GENERATOR — professional YouTube thumbnail
+# ══════════════════════════════════════════════════════════════
+def extract_best_frame(video_path, out_path, n_frames=12):
+    """Videodan eng yorqin/rangli kadrni ajratib olish (ffmpeg)."""
+    tmp_dir = os.path.join(TEMP_DIR, "thumb_frames")
+    os.makedirs(tmp_dir, exist_ok=True)
+    pattern = os.path.join(tmp_dir, "f%03d.jpg")
+    try:
+        subprocess.run([
+            "ffmpeg", "-y", "-i", video_path,
+            "-vf", f"fps=1,select=not(mod(n\\,3))",
+            "-vframes", str(n_frames),
+            "-q:v", "2", pattern
+        ], capture_output=True, timeout=30)
+    except Exception:
+        return None
+
+    frames = sorted([
+        os.path.join(tmp_dir, f)
+        for f in os.listdir(tmp_dir)
+        if f.endswith(".jpg")
+    ])
+    if not frames:
+        return None
+
+    # Har kadrning yorqinligi va rangliligi
+    best, best_score = frames[0], -1
+    for fp in frames:
+        try:
+            img = Image.open(fp).convert("RGB")
+            img.thumbnail((320, 180))
+            pixels = list(img.getdata())
+            brightness = sum(r + g + b for r, g, b in pixels) / (len(pixels) * 3)
+            # Rangliligi: R-G-B farqlari
+            colorfulness = sum(
+                abs(r - g) + abs(g - b) + abs(r - b)
+                for r, g, b in pixels
+            ) / len(pixels)
+            score = brightness * 0.4 + colorfulness * 0.6
+            if score > best_score:
+                best_score = score
+                best = fp
+        except Exception:
+            continue
+
+    try:
+        import shutil
+        shutil.copy(best, out_path)
+        shutil.rmtree(tmp_dir, ignore_errors=True)
+        return out_path
+    except Exception:
+        return None
+
+
+def make_youtube_thumbnail(video_path, sarlavha, hook, lang="uz",
+                           out_path=None):
+    """
+    Professional YouTube thumbnail:
+    - Eng yorqin video kadrdan fon
+    - Quyidan gradient overlay
+    - Chap tomonda qizil/oltin aksent chiziq
+    - Yuqori chap: 1KUN brend badge
+    - Pastda: hook (qisqa jumla) + asosiy sarlavha
+    1280x720 px
+    """
+    W, H = 1280, 720
+    if out_path is None:
+        base = os.path.splitext(video_path)[0]
+        out_path = base + "_thumb.jpg"
+
+    # 1. Fon kadrni ajratib olish
+    frame_path = out_path + "_frame.jpg"
+    frame = extract_best_frame(video_path, frame_path)
+
+    if frame and os.path.exists(frame):
+        bg = Image.open(frame).convert("RGB")
+        bg = bg.resize((W, H), Image.LANCZOS)
+        # Kontrastni oshirish
+        from PIL import ImageEnhance
+        bg = ImageEnhance.Contrast(bg).enhance(1.15)
+        bg = ImageEnhance.Brightness(bg).enhance(1.05)
+        bg = ImageEnhance.Color(bg).enhance(1.3)
+        try:
+            os.remove(frame_path)
+        except Exception:
+            pass
+    else:
+        # Fon yo'q — gradient fon yaratish
+        bg = Image.new("RGB", (W, H), C_BG)
+        draw_bg = ImageDraw.Draw(bg)
+        for y in range(H):
+            r = int(C_BLUE[0] * (1 - y/H) + C_BG[0] * (y/H))
+            g = int(C_BLUE[1] * (1 - y/H) + C_BG[1] * (y/H))
+            b = int(C_BLUE[2] * (1 - y/H) + C_BG[2] * (y/H))
+            draw_bg.line([(0, y), (W, y)], fill=(r, g, b))
+
+    canvas = bg.copy()
+    draw   = ImageDraw.Draw(canvas)
+
+    # 2. Quyidan gradient overlay (qorong'i — matn ko'rinsun)
+    overlay = Image.new("RGBA", (W, H), (0, 0, 0, 0))
+    ov_draw = ImageDraw.Draw(overlay)
+    for y in range(H // 2, H):
+        alpha = int(200 * ((y - H // 2) / (H // 2)) ** 1.4)
+        ov_draw.line([(0, y), (W, y)], fill=(5, 10, 22, alpha))
+    # Yuqori engil shadow
+    for y in range(0, 120):
+        alpha = int(120 * (1 - y / 120))
+        ov_draw.line([(0, y), (W, y)], fill=(0, 0, 0, alpha))
+    canvas = Image.alpha_composite(canvas.convert("RGBA"), overlay).convert("RGB")
+    draw   = ImageDraw.Draw(canvas)
+
+    # 3. Chap aksent chiziq (qizil-oltin gradient)
+    for y in range(H):
+        t = y / H
+        r = int(C_RED[0] * (1-t) + C_GOLD[0] * t)
+        g = int(C_RED[1] * (1-t) + C_GOLD[1] * t)
+        b = int(C_RED[2] * (1-t) + C_GOLD[2] * t)
+        draw.line([(0, y), (7, y)], fill=(r, g, b))
+
+    # 4. Pastda oltin chizig'i (pastki ramka)
+    draw.rectangle([(0, H-6), (W, H)], fill=C_GOLD)
+
+    # 5. Brend badge — yuqori chap
+    fonts = get_fonts()
+    badge_txt_lang = {"uz": "1КУН", "ru": "1ДЕНЬ", "en": "1DAY"}
+    badge_txt = badge_txt_lang.get(lang, "1КУН")
+    badge_sub = "GLOBAL NEWS"
+    bw, bh = 160, 52
+    # Badge fon
+    draw.rectangle([(15, 12), (15+bw, 12+bh)], fill=(0, 0, 0, 200))
+    draw.rectangle([(15, 12), (15+bw, 12+bh)], outline=C_GOLD, width=2)
+    # Badge matn
+    try:
+        f_badge  = ImageFont.truetype("arialbd.ttf", 26)
+        f_sub    = ImageFont.truetype("arial.ttf",   13)
+    except Exception:
+        f_badge = f_sub = ImageFont.load_default()
+    bx = 15 + bw // 2
+    draw.text((bx, 22), badge_txt,  font=f_badge, fill=C_GOLD,   anchor="mt")
+    draw.text((bx, 46), badge_sub,  font=f_sub,   fill=C_WHITE,  anchor="mt")
+
+    # 6. BREAKING badge (muhim yangilik bo'lsa)
+    # (daraja ni data'dan olish mumkin — hozircha skip)
+
+    # 7. Hook matni (qisqa, sariq)
+    hook_clean = (hook or "").strip().upper()
+    if hook_clean:
+        try:
+            f_hook = ImageFont.truetype("arialbd.ttf", 34)
+        except Exception:
+            f_hook = ImageFont.load_default()
+        hx = W // 2
+        hy = H - 185
+        # Shadow
+        draw.text((hx+2, hy+2), hook_clean, font=f_hook, fill=(0,0,0,180), anchor="mm")
+        draw.text((hx, hy), hook_clean, font=f_hook, fill=C_YELLOW, anchor="mm")
+
+    # 8. Asosiy sarlavha (oq, katta, 2 qatorga bo'linadi)
+    sarlavha_clean = sarlavha.strip()
+    try:
+        f_title = ImageFont.truetype("arialbd.ttf", 56)
+        f_title2 = ImageFont.truetype("arialbd.ttf", 48)
+    except Exception:
+        f_title = f_title2 = ImageFont.load_default()
+
+    # Sarlavhani 2 qatorga bo'lish
+    words = sarlavha_clean.split()
+    mid   = len(words) // 2
+    line1 = " ".join(words[:mid]) if mid else sarlavha_clean
+    line2 = " ".join(words[mid:]) if mid else ""
+
+    tx = W // 2
+    ty1 = H - 130
+    ty2 = H - 68
+
+    for line, ty, font in [(line1, ty1, f_title), (line2, ty2, f_title2)]:
+        if not line:
+            continue
+        # Ko'lanka
+        draw.text((tx+3, ty+3), line, font=font, fill=(0,0,0,200), anchor="mm")
+        draw.text((tx, ty), line, font=font, fill=C_WHITE, anchor="mm")
+
+    # 9. Saqlash
+    canvas.save(out_path, "JPEG", quality=95)
+    print(f"   🖼  Thumbnail: {os.path.basename(out_path)}")
+    return out_path
+
+
+# ══════════════════════════════════════════════════════════════
+# SHORTS GENERATOR — vertical 9:16 clip from long video
+# ══════════════════════════════════════════════════════════════
+def make_shorts_clip(video_path, sarlavha, hook, lang="uz",
+                     duration=58, out_path=None):
+    """
+    Uzun videodan 58 soniyalik Shorts versiyasi:
+    - 16:9 → 9:16 (markaziy crop)
+    - Yuqorida hook matni
+    - Pastda sarlavha
+    - 1080x1920 px
+    """
+    if out_path is None:
+        base = os.path.splitext(video_path)[0]
+        out_path = base + "_shorts.mp4"
+
+    SW, SH = 1080, 1920   # Shorts o'lchami
+
+    # Manba video uzunligini aniqlash
+    try:
+        probe = subprocess.run([
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            video_path
+        ], capture_output=True, text=True, timeout=15)
+        src_dur = float(probe.stdout.strip())
+    except Exception:
+        src_dur = 999
+
+    clip_dur = min(duration, src_dur - 0.5)
+    if clip_dur < 15:
+        print("   ⚠️  Video juda qisqa — Shorts yaratilmadi")
+        return None
+
+    # ffmpeg filter: crop markaz, scale, matn overlay
+    sarlavha_esc = sarlavha.replace("'", "\\'").replace(":", "\\:")[:60]
+    hook_esc     = (hook or "").replace("'", "\\'").replace(":", "\\:")[:40].upper()
+
+    # Font yo'li
+    font_bold = "C\\:/Windows/Fonts/arialbd.ttf"
+    font_reg  = "C\\:/Windows/Fonts/arial.ttf"
+
+    # Filter chain
+    # 1. Crop: 9:16 markazdan (input 16:9 bo'lsa: crop=ih*9/16:ih)
+    # 2. Scale: 1080x1920
+    # 3. Hook matni (yuqorida, sariq)
+    # 4. Sarlavha (pastda, oq)
+    # 5. 1KUN badge (yuqori chap)
+
+    vf_parts = [
+        "crop=ih*9/16:ih",
+        f"scale={SW}:{SH}",
+        # Quyidan qorong'i gradient (drawbox orqali yaqinlashtiriladi)
+        f"drawbox=x=0:y={SH-350}:w={SW}:h=350:color=black@0.65:t=fill",
+        # Yuqori shadow
+        f"drawbox=x=0:y=0:w={SW}:h=200:color=black@0.5:t=fill",
+        # Chap aksent chiziq
+        f"drawbox=x=0:y=0:w=8:h={SH}:color=0xff2200@0.9:t=fill",
+        # Pastki oltin chiziq
+        f"drawbox=x=0:y={SH-8}:w={SW}:h=8:color=0xf0a500:t=fill",
+    ]
+
+    # Hook matni
+    if hook_esc:
+        vf_parts.append(
+            f"drawtext=fontfile={font_bold}:text='{hook_esc}':"
+            f"fontsize=60:fontcolor=0xFFD200:x=(w-text_w)/2:y={SH-300}:"
+            f"shadowcolor=black:shadowx=3:shadowy=3"
+        )
+
+    # Sarlavha (2 qatorga bo'lish — ffmpeg wrap_width)
+    if sarlavha_esc:
+        vf_parts.append(
+            f"drawtext=fontfile={font_bold}:text='{sarlavha_esc}':"
+            f"fontsize=52:fontcolor=white:x=(w-text_w)/2:y={SH-220}:"
+            f"shadowcolor=black:shadowx=3:shadowy=3:"
+            f"line_spacing=8"
+        )
+
+    # 1KUN badge
+    brand_txt = {"uz": "1KUN GLOBAL", "ru": "1DEN GLOBAL", "en": "1DAY GLOBAL"}.get(lang, "1KUN")
+    vf_parts.append(
+        f"drawtext=fontfile={font_bold}:text='{brand_txt}':"
+        f"fontsize=42:fontcolor=0xF0A500:x=30:y=40:"
+        f"shadowcolor=black:shadowx=2:shadowy=2"
+    )
+
+    vf = ",".join(vf_parts)
+
+    try:
+        subprocess.run([
+            "ffmpeg", "-y",
+            "-i", video_path,
+            "-t", str(clip_dur),
+            "-vf", vf,
+            "-c:v", "libx264", "-preset", "fast", "-crf", "23",
+            "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart",
+            out_path
+        ], capture_output=True, timeout=180)
+
+        if os.path.exists(out_path) and os.path.getsize(out_path) > 500_000:
+            sz = os.path.getsize(out_path) / 1_048_576
+            print(f"   📱 Shorts: {os.path.basename(out_path)} ({sz:.1f} MB)")
+            return out_path
+        else:
+            print("   ⚠️  Shorts fayl yaratilmadi")
+            return None
+    except Exception as e:
+        print(f"   ⚠️  Shorts xato: {e}")
+        return None
+
+
 # ── Pipeline ──────────────────────────────────────────────────
 def youtube_pipeline(data):
     ts   = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -1882,6 +2186,7 @@ def youtube_pipeline(data):
     keywords_ru = data.get("keywords_ru", [])
     location    = data.get("location", data.get("location_uz", ""))
     script      = data.get("youtube_script_latin", "")
+    hook        = data.get("hook", {}).get(lang, "")
 
     print(f"\n 1KUN: {sarlavha[:45]}...")
 
@@ -1915,7 +2220,19 @@ def youtube_pipeline(data):
     if result is None:
         return None
 
-    # 4. YouTube yoki lokal
+    # 5. Thumbnail yaratish
+    print("  5  Thumbnail...")
+    thumb_path = video_file.replace(".mp4", "_thumb.jpg")
+    thumb = make_youtube_thumbnail(video_file, sarlavha, hook, lang=lang,
+                                   out_path=thumb_path)
+
+    # 6. Shorts versiyasi
+    print("  6  Shorts versiyasi...")
+    shorts_path = video_file.replace(".mp4", "_shorts.mp4")
+    shorts = make_shorts_clip(video_file, sarlavha, hook, lang=lang,
+                              duration=58, out_path=shorts_path)
+
+    # 7. YouTube yoki lokal
     youtube_enabled = os.getenv("YOUTUBE_ENABLED", "false").lower() == "true"
     if youtube_enabled:
         print("  4  YouTube...")
@@ -1931,7 +2248,37 @@ def youtube_pipeline(data):
         _base_tags = {"uz": ["yangilik","uzbek","1kun"], "ru": ["новости","1день"], "en": ["news","1day"]}
         tags = ([t.replace("#","") for t in data.get("hashtaglar","").split()]
                 + keywords_en + _base_tags.get(lang, ["news"]))
-        return upload_to_youtube(yt, video_file, sarlavha, desc, tags)
+        vid_id = upload_to_youtube(yt, video_file, sarlavha, desc, tags)
+
+        # Thumbnail yuklash
+        if vid_id and thumb and os.path.exists(thumb):
+            try:
+                yt.thumbnails().set(
+                    videoId=vid_id,
+                    media_body=MediaFileUpload(thumb, mimetype="image/jpeg")
+                ).execute()
+                print(f"   🖼  Thumbnail yuklandi")
+            except Exception as e:
+                print(f"   ⚠️  Thumbnail yuklanmadi: {e}")
+
+        # Shorts yuklash
+        if vid_id and shorts and os.path.exists(shorts):
+            try:
+                shorts_title = f"{sarlavha} #Shorts"
+                shorts_desc  = f"{hook}\n\n{jumla1}\n\n#Shorts {_yt_cta.get(lang, '')}"
+                shorts_id = upload_to_youtube(
+                    yt, shorts, shorts_title, shorts_desc,
+                    tags + ["Shorts", "shorts"]
+                )
+                print(f"   📱 Shorts yuklandi: https://youtu.be/{shorts_id}")
+            except Exception as e:
+                print(f"   ⚠️  Shorts yuklanmadi: {e}")
+
+        return vid_id
     else:
         print(f"   Lokal: {video_file}")
+        if thumb:
+            print(f"   🖼  Thumbnail: {thumb}")
+        if shorts:
+            print(f"   📱 Shorts: {shorts}")
         return video_file
