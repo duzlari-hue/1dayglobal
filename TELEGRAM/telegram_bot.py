@@ -83,9 +83,9 @@ def _ensure_cyr(text: str) -> str:
     if any(m in tl for m in _UZ_MARKERS):
         return lat2cyr(text)  # O'zbek lotin → kirill
 
-    # Inglizcha yoki noaniq — lat2cyr QILMAYMIZ, xato chiqarish
-    log.warning(f"_ensure_cyr: inglizcha matn keldi, o'zgartirilmadi: '{text[:60]}'")
-    return text  # Inglizcha holida qoldirish (bo'sh bo'lganidan yaxshi)
+    # Inglizcha yoki noaniq — lat2cyr QILMAYMIZ, bo'sh qaytaramiz
+    log.warning(f"_ensure_cyr: inglizcha — bo'sh: '{text[:60]}'")
+    return ""  # Bo'sh matn gibberish kiriллdan yaxshi
 
 
 def send_all_languages(d, article):

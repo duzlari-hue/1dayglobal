@@ -373,6 +373,10 @@ def groq_translate(title, description, source):
 News title: {title}
 News details: {description}
 
+⚠️ CRITICAL: sarlavha_uz, jumla1_uz, jumla2_uz, location_uz, hashtag_uz fields MUST be in Uzbek CYRILLIC script.
+DO NOT write English in these fields. TRANSLATE everything into Uzbek Cyrillic.
+Example: "Six months after ceasefire" → "Оташбас бошланганидан олти ой ўтгач"
+
 Return ONLY valid JSON, no extra text, no markdown:
 {{
   "sarlavha_uz": "⚠️ ФАҚАТ ЎЗБЕК КИРИЛЛ АЛИФБОСИДА — инглизча ёзма! 5-8 сўз, sentence case. Намуна: 'Трамп Европага янги божхона солиғини эълон қилди'. Trump=Трамп, Biden=Байден, NATO=НАТО, fumes=ғазабланди, rant=танқид",
@@ -497,20 +501,24 @@ RULES:
             continue  # Allaqachon kirill — yaxshi
 
         if _is_uzbek_latin(val):
-            # O'zbek lotin → kirill
+            # O'zbek lotin → kirill (to'g'ri yo'l)
             data[field] = lat2cyr(val)
             log.debug(f"lat2cyr ({field}): o'zbek lotin→kirill")
         else:
-            # Inglizcha yoki noto'g'ri til — qayta so'rash
-            log.warning(f"⚠️  {field} inglizcha keldi: '{val[:50]}' — qayta tarjima qilinmoqda...")
-            fixed = _fix_title_only(title, "uz") if "sarlavha" in field else ""
+            # Inglizcha yoki noto'g'ri til — lat2cyr QILMAYMIZ
+            log.warning(f"⚠️  {field} inglizcha: '{val[:50]}' — qayta so'ralmoqda...")
+            fixed = _fix_title_only(title, "uz")
             if fixed and _is_mostly_cyr(fixed):
-                data[field] = fixed
-                log.debug(f"  ✓ {field} tuzatildi: '{fixed[:50]}'")
+                if "sarlavha" in field:
+                    data[field] = fixed
+                elif "jumla1" in field:
+                    data[field] = fixed  # jumla1 uchun sarlavhani ishlat
+                else:
+                    data[field] = ""    # jumla2, location — bo'sh qoldir
+                log.debug(f"  ✓ {field} tuzatildi: '{data[field][:50]}'")
             else:
-                # So'nggi chora: lat2cyr ham qo'llash (noto'g'ri bo'lsa ham bo'sh bo'lganidan yaxshi)
-                data[field] = lat2cyr(val)
-                log.warning(f"  ⚠️  {field} lat2cyr majburan: '{val[:40]}'")
+                data[field] = ""  # Bo'sh — lat2cyr gibberish'dan yaxshi
+                log.warning(f"  ✗ {field} bo'sh qoldirildi (inglizcha tarjima qilinmadi)")
 
     # ── UZ kirill maydonlarga joy nomlari (rus→o'zbek) ───────
     for field in _CYR_FIELDS:
