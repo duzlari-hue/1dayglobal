@@ -65,7 +65,7 @@ def send_telegram(caption, channel):
 
 def _ensure_cyr(text: str) -> str:
     """Matn asosan lotin yozuvida bo'lsa — kirillga o'girish.
-    60% dan kam kirill harf bo'lsa — konvertatsiya qilinadi."""
+    Inglizcha matn lat2cyr qilinmaydi (Трумп агаин фумес xatosi oldini olish)."""
     if not text:
         return text
     cyr_chars = "абвгдеёжзийклмнопрстуфхцчшщъыьэюяўқғҳАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯЎҚҒҲ"
@@ -75,7 +75,17 @@ def _ensure_cyr(text: str) -> str:
     cyr_n = sum(1 for c in letters if c in cyr_chars)
     if cyr_n / len(letters) >= 0.60:
         return text   # allaqachon asosan kirill
-    return lat2cyr(text)
+
+    # O'zbek lotiniga xos belgilar
+    _UZ_MARKERS = ("o'", "g'", "o'", "g'", "sh", "ch",
+                   "o'z", "va ", "bu ", "lar", "dan", "ga ")
+    tl = text.lower()
+    if any(m in tl for m in _UZ_MARKERS):
+        return lat2cyr(text)  # O'zbek lotin → kirill
+
+    # Inglizcha yoki noaniq — lat2cyr QILMAYMIZ, xato chiqarish
+    log.warning(f"_ensure_cyr: inglizcha matn keldi, o'zgartirilmadi: '{text[:60]}'")
+    return text  # Inglizcha holida qoldirish (bo'sh bo'lganidan yaxshi)
 
 
 def send_all_languages(d, article):

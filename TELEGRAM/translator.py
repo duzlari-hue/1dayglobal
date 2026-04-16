@@ -375,9 +375,9 @@ News details: {description}
 
 Return ONLY valid JSON, no extra text, no markdown:
 {{
-  "sarlavha_uz": "Ўзбекча сарлавҳа КИРИЛЛ алифбосида, 5-8 сўз, sentence case (фақат биринчи сўз ва хос исмлар бош ҳарф). Намуна: 'Трамп Европага янги божхона солиғини эълон қилди'. Қоида: фақат ўзбек кириллида, рус сўзи ишлатма. Чет эл номлари: Trump=Трамп, Biden=Байден, NATO=НАТО, EU=ЕИ",
-  "jumla1_uz": "Воқеанинг асосий мазмуни, 2 жумла, ўзбек КИРИЛЛ алифбосида. Рус сўзи ишлатма.",
-  "jumla2_uz": "Қўшимча тафсилот, 2 жумла, ўзбек КИРИЛЛ алифбосида.",
+  "sarlavha_uz": "⚠️ ФАҚАТ ЎЗБЕК КИРИЛЛ АЛИФБОСИДА — инглизча ёзма! 5-8 сўз, sentence case. Намуна: 'Трамп Европага янги божхона солиғини эълон қилди'. Trump=Трамп, Biden=Байден, NATO=НАТО, fumes=ғазабланди, rant=танқид",
+  "jumla1_uz": "⚠️ ФАҚАТ ЎЗБЕК КИРИЛЛ — инглизча ёзма! Воқеанинг асосий мазмуни, 2 жумла.",
+  "jumla2_uz": "⚠️ ФАҚАТ ЎЗБЕК КИРИЛЛ — инглизча ёзма! Қўшимча тафсилот, 2 жумла.",
   "sarlavha_ru": "Заголовок 5-8 слов на русском, sentence case (только первое слово и имена собственные с заглавной). Пример: 'Трамп объявил новые пошлины для Европы'",
   "jumla1_ru": "Главное событие, 2 предложения на русском языке",
   "jumla2_ru": "Дополнительные детали, 2 предложения на русском",
@@ -471,6 +471,11 @@ RULES:
     # ── UZ kirill maydonlar (sarlavha/jumla) — kiriллcha bo'lishi kerak ──
     _CYR_FIELDS = ("sarlavha_uz", "jumla1_uz", "jumla2_uz", "location_uz")
 
+    # O'zbek lotiniga xos belgilar — inglizchadan farqlash uchun
+    _UZ_LATIN_MARKERS = ("o'", "g'", "o'", "g'", "sh", "ch", "ng",
+                         "o'z", "va ", "bu ", "lar", "dan", "ga ",
+                         "ni ", "da ", "ham", "bir", "bor")
+
     def _is_mostly_cyr(text: str) -> bool:
         """Matnning kamida 60% harflari kiriллcha bo'lsa — True."""
         letters = [c for c in text if c.isalpha()]
@@ -479,11 +484,33 @@ RULES:
         cyr_n = sum(1 for c in letters if c in _CYR)
         return cyr_n / len(letters) >= 0.60
 
+    def _is_uzbek_latin(text: str) -> bool:
+        """Matn o'zbek lotinida yozilganmi (inglizcha emas)?"""
+        tl = text.lower()
+        return any(m in tl for m in _UZ_LATIN_MARKERS)
+
     for field in _CYR_FIELDS:
         val = data.get(field, "")
-        if val and not _is_mostly_cyr(val):
+        if not val:
+            continue
+        if _is_mostly_cyr(val):
+            continue  # Allaqachon kirill — yaxshi
+
+        if _is_uzbek_latin(val):
+            # O'zbek lotin → kirill
             data[field] = lat2cyr(val)
-            log.debug(f"lat2cyr ({field}): lotin→kirill")
+            log.debug(f"lat2cyr ({field}): o'zbek lotin→kirill")
+        else:
+            # Inglizcha yoki noto'g'ri til — qayta so'rash
+            log.warning(f"⚠️  {field} inglizcha keldi: '{val[:50]}' — qayta tarjima qilinmoqda...")
+            fixed = _fix_title_only(title, "uz") if "sarlavha" in field else ""
+            if fixed and _is_mostly_cyr(fixed):
+                data[field] = fixed
+                log.debug(f"  ✓ {field} tuzatildi: '{fixed[:50]}'")
+            else:
+                # So'nggi chora: lat2cyr ham qo'llash (noto'g'ri bo'lsa ham bo'sh bo'lganidan yaxshi)
+                data[field] = lat2cyr(val)
+                log.warning(f"  ⚠️  {field} lat2cyr majburan: '{val[:40]}'")
 
     # ── UZ kirill maydonlarga joy nomlari (rus→o'zbek) ───────
     for field in _CYR_FIELDS:
