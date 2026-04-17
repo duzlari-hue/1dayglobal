@@ -2255,11 +2255,12 @@ def make_shorts_clip(video_path, sarlavha, hook, lang="uz",
         """Windows yo'lini ffmpeg filter string formatiga o'girish."""
         return p.replace("\\", "/").replace(":", "\\:")
 
-    font_bold = "C\\:/Windows/Fonts/arialbd.ttf"
+    # arialbd.ttf — eng ishonchli, kirill qo'llab-quvvatlaydi, ffmpeg bilan muammosiz
+    font_bold = _ffmpeg_font("C:\\Windows\\Fonts\\arialbd.ttf")
     for _fb in [
+        "C:\\Windows\\Fonts\\arialbd.ttf",       # Birinchi — eng ishonchli
         "C:\\Windows\\Fonts\\DejaVuSans-Bold.ttf",
-        "C:\\Windows\\Fonts\\seguibl.ttf",   # Segoe UI Black — kirill
-        "C:\\Windows\\Fonts\\arialbd.ttf",
+        "C:\\Windows\\Fonts\\calibrib.ttf",
     ]:
         if os.path.exists(_fb):
             font_bold = _ffmpeg_font(_fb)
@@ -2311,20 +2312,22 @@ def make_shorts_clip(video_path, sarlavha, hook, lang="uz",
         f"shadowcolor=black:shadowx=2:shadowy=2",
     ]
 
-    # Hook matni — textfile absolute yo'l bilan
+    # Hook matni — textfile (tirnoqsiz, markazlash: (w-tw)/2)
     if hook_text:
         vf_parts.append(
-            f"drawtext=fontfile={font_bold}:textfile='{hook_tf}':"
-            f"fontsize=60:fontcolor=0xFFD200:x=(w-text_w)/2:y={SH-330}:"
-            f"shadowcolor=black:shadowx=3:shadowy=3"
+            f"drawtext=fontfile={font_bold}:textfile={hook_tf}:"
+            f"fontsize=60:fontcolor=0xFFD200"
+            f":x=(w-tw)/2:y={SH-330}"
+            f":shadowcolor=black:shadowx=3:shadowy=3"
         )
 
-    # Sarlavha — textfile absolute yo'l, line_spacing olib tashlandi (eski ffmpeg-da ishlamaydi)
+    # Sarlavha — textfile (tirnoqsiz)
     if sarlavha_text:
         vf_parts.append(
-            f"drawtext=fontfile={font_bold}:textfile='{sarlavha_tf}':"
-            f"fontsize=48:fontcolor=white:x=(w-text_w)/2:y={SH-240}:"
-            f"shadowcolor=black:shadowx=3:shadowy=3"
+            f"drawtext=fontfile={font_bold}:textfile={sarlavha_tf}:"
+            f"fontsize=48:fontcolor=white"
+            f":x=(w-tw)/2:y={SH-240}"
+            f":shadowcolor=black:shadowx=3:shadowy=3"
         )
 
     vf = ",".join(vf_parts)
