@@ -1847,19 +1847,35 @@ def build_video(voice_file, voice_dur, sarlavha, daraja, location,
 def youtube_auth():
     creds = None
     if os.path.exists(TOKEN_FILE):
-        creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+        try:
+            creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+        except Exception:
+            creds = None
+
     if not creds or not creds.valid:
         if creds and creds.expired and creds.refresh_token:
-            creds.refresh(Request())
-            print("   Token yangilandi")
-        else:
+            try:
+                creds.refresh(Request())
+                print("   Token yangilandi ✓")
+            except Exception as e:
+                print(f"   ⚠️  Token yangilash xato ({e}) — qayta autentifikatsiya...")
+                creds = None
+                try:
+                    os.remove(TOKEN_FILE)
+                except Exception:
+                    pass
+
+        if not creds or not creds.valid:
+            print("   🔐 Browser orqali YouTube ga kirishingiz kerak...")
             flow = InstalledAppFlow.from_client_secrets_file(
                 CLIENT_SECRETS, SCOPES)
             creds = flow.run_local_server(
                 port=0, prompt="consent", access_type="offline")
-            print("   Token saqlandi!")
+            print("   ✅ Token saqlandi!")
+
         with open(TOKEN_FILE, "w") as f:
             f.write(creds.to_json())
+
     return build("youtube", "v3", credentials=creds)
 
 
@@ -2116,16 +2132,19 @@ def make_shorts_clip(video_path, sarlavha, hook, lang="uz",
         print("   ⚠️  Video juda qisqa — Shorts yaratilmadi")
         return None
 
-    # Font yo'li (Windows)
+    # Font yo'li (Windows) — ffmpeg uchun: C\:/Windows/Fonts/... formatida
+    def _ffmpeg_font(p):
+        """Windows yo'lini ffmpeg filter string formatiga o'girish."""
+        return p.replace("\\", "/").replace(":", "\\:")
+
     font_bold = "C\\:/Windows/Fonts/arialbd.ttf"
-    # DejaVu Serif kiriллni qo'llab-quvvatlaydi (mavjud bo'lsa)
     for _fb in [
         "C:\\Windows\\Fonts\\DejaVuSans-Bold.ttf",
         "C:\\Windows\\Fonts\\seguibl.ttf",   # Segoe UI Black — kirill
         "C:\\Windows\\Fonts\\arialbd.ttf",
     ]:
         if os.path.exists(_fb):
-            font_bold = _fb.replace("\\", "\\\\").replace(":", "\\:")
+            font_bold = _ffmpeg_font(_fb)
             break
 
     # Kirill matnni textfile orqali uzatish (subprocess argument sifatida xavfsiz)
@@ -2141,9 +2160,9 @@ def make_shorts_clip(video_path, sarlavha, hook, lang="uz",
     with open(tmp_hook_file,     "w", encoding="utf-8") as f: f.write(hook_text)
     with open(tmp_sarlavha_file, "w", encoding="utf-8") as f: f.write(sarlavha_text)
 
-    # Fayl yo'llarini ffmpeg uchun ekranlash
+    # Fayl yo'llarini ffmpeg filter string uchun ekranlash
     def _esc_path(p):
-        return p.replace("\\", "/").replace(":", "\\:")
+        return p.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
 
     hook_tf     = _esc_path(tmp_hook_file)
     sarlavha_tf = _esc_path(tmp_sarlavha_file)
