@@ -112,6 +112,12 @@ def run_pipeline():
                 "ru": d.get("sarlavha_ru", ""),
                 "en": d.get("sarlavha_en", ""),
             },
+            # jumla1/jumla2 — YouTube tavsifi uchun (script emas)
+            "jumla": {
+                "uz": (d.get("jumla1_uz", "") + " " + d.get("jumla2_uz", "")).strip(),
+                "ru": (d.get("jumla1_ru", "") + " " + d.get("jumla2_ru", "")).strip(),
+                "en": (d.get("jumla1_en", "") + " " + d.get("jumla2_en", "")).strip(),
+            },
             "keywords_en":    d.get("keywords_en", []),
             "search_queries": d.get("search_queries", []),
             "shot_list":      d.get("shot_list", []),

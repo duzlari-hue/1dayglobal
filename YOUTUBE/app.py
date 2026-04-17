@@ -331,6 +331,9 @@ def process_queue():
             except Exception as _e:
                 log.debug(f"Sarlavha tuzatish xato: {_e}")
 
+            # jumla — tavsif uchun (script emas, intro yo'q)
+            jumlalar = data.get("jumla", {})
+
             any_success = False
             for lang in ["en", "ru", "uz"]:
                 sarlavha = sarlavhalar.get(lang, "")
@@ -344,6 +347,18 @@ def process_queue():
                         log.warning(f"  ⛔ {lang.upper()} sarlavha tuzatilmadi — o'tkazildi")
                         continue
 
+                # YouTube tavsifi: jumla (intro yo'q) yoki article description
+                jumla_desc = jumlalar.get(lang, "")
+                if not jumla_desc:
+                    # Eski queue fayllar uchun: scriptdan intro tozalab olish
+                    raw_script = scripts.get(lang, "")
+                    # Oddiy regex bilan intro tozalash (youtube_maker import qilmasdan)
+                    import re as _re
+                    raw_script = _re.sub(
+                        r"^(Efirda\s+1KUN\s+Global\.?|В\s+эфире\s+1ДЕНЬ\s+Global\.?|This\s+is\s+1DAY\s+Global\.?)\s*",
+                        "", raw_script, flags=_re.IGNORECASE).strip()
+                    jumla_desc = raw_script[:300]
+
                 video_data = {
                     "lang":                lang,
                     "sarlavha":            sarlavha,
@@ -354,8 +369,10 @@ def process_queue():
                     "keywords_en":         combined_kw,
                     "search_queries":      combined_kw,
                     "yt_clips":            yt_clips,
-                    "jumla1":              article.get("description", ""),
-                    "jumla2":              scripts.get(lang, "")[:200],
+                    "jumla1":              jumla_desc,
+                    "jumla2":              "",   # jumla_desc ichida bor
+                    "hook":                data.get("hook", {}),
+                    "hashtaglar":          data.get("sarlavha", {}).get(lang, ""),
                 }
                 log.info(f"  🎬 {lang.upper()} video: '{sarlavha[:55]}'")
                 result = youtube_pipeline(video_data)

@@ -2380,7 +2380,11 @@ def youtube_pipeline(data):
             "ru": f"Подпишитесь на новости!\nЛайк |\n{handle} | {brand} Global",
             "en": f"Subscribe for more news!\nLike |\n{handle} | {brand} Global",
         }
-        desc = (f"{jumla1}\n\n{jumla2}\n\n" + _yt_cta.get(lang, _yt_cta["uz"]))
+        # Intro/outro tozalash (eski queue fayllar uchun ham)
+        _j1 = _strip_intro_outro(jumla1) if jumla1 else ""
+        _j2 = _strip_intro_outro(jumla2) if jumla2 else ""
+        _desc_body = "\n\n".join(x for x in [_j1, _j2] if x)
+        desc = (_desc_body + "\n\n" + _yt_cta.get(lang, _yt_cta["uz"])).strip()
         _base_tags = {"uz": ["yangilik","uzbek","1kun"], "ru": ["новости","1день"], "en": ["news","1day"]}
         tags = ([t.replace("#","") for t in data.get("hashtaglar","").split()]
                 + keywords_en + _base_tags.get(lang, ["news"]))
