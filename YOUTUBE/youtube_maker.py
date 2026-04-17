@@ -1946,20 +1946,111 @@ def upload_to_youtube(youtube, video_file, title, description, tags):
 # ══════════════════════════════════════════════════════════════
 # THUMBNAIL GENERATOR — professional YouTube thumbnail
 # ══════════════════════════════════════════════════════════════
-def extract_best_frame(video_path, out_path, n_frames=12):
-    """Videodan eng yorqin/rangli kadrni ajratib olish (ffmpeg)."""
+def _frame_score(img_path):
+    """
+    Kadrni baholash — studiya/diktorsiz, tashqi/voqea kadrlarni afzal ko'rish.
+
+    Yaxshi kadr belgilari:
+    + Rang xilma-xilligi (ko'p turli ranglar)
+    + Qirralar (chetlar) ko'p — tashqi manzara, shahar, voqea
+    + Nisbatan yorqin
+
+    Yomon kadr belgilari (studio):
+    - Bitta rang ustunligi (masalan sariq ko'ylak > 25% piksel)
+    - Tekis fon (qirralar kam)
+    - O'rtada bitta katta obyekt (diktor)
+    """
+    try:
+        img = Image.open(img_path).convert("RGB")
+        img = img.resize((160, 90))  # Tez hisoblash uchun
+
+        pixels = list(img.getdata())
+        n = len(pixels)
+
+        # 1. Yorqinlik (0-255)
+        brightness = sum(r + g + b for r, g, b in pixels) / (n * 3)
+
+        # 2. Rang xilma-xilligi: piksellarni 64 ta "kubga" ajratish
+        #    Ko'p turli kub = rang xilma-xilligi yuqori
+        buckets = set()
+        for r, g, b in pixels:
+            buckets.add((r >> 2, g >> 2, b >> 2))  # 64x64x64 grid
+        diversity = len(buckets) / 4096  # 0..1
+
+        # 3. Bitta rang ustunligi tekshiruvi (studio detector)
+        #    Agar biron rang 25%+ pikselni egallab olsa → studio ehtimoli yuqori
+        from collections import Counter
+        coarse = Counter((r >> 4, g >> 4, b >> 4) for r, g, b in pixels)
+        top_bucket_ratio = coarse.most_common(1)[0][1] / n
+        studio_penalty = max(0, top_bucket_ratio - 0.20) * 3  # 20%+ bo'lsa jazo
+
+        # 4. Markaziy zona tekshiruvi: o'rtada katta tekis maydon = diktor
+        #    Markaziy 50x30 pikselni olish
+        center_pixels = []
+        for y in range(30, 60):
+            for x in range(55, 105):
+                idx = y * 160 + x
+                if idx < n:
+                    center_pixels.append(pixels[idx])
+        if center_pixels:
+            cr = sum(p[0] for p in center_pixels) / len(center_pixels)
+            cg = sum(p[1] for p in center_pixels) / len(center_pixels)
+            cb = sum(p[2] for p in center_pixels) / len(center_pixels)
+            # Markazda past dispersiya = tekis fon (diktor) = jazo
+            center_var = sum(
+                (p[0]-cr)**2 + (p[1]-cg)**2 + (p[2]-cb)**2
+                for p in center_pixels
+            ) / len(center_pixels)
+            center_penalty = max(0, 1 - center_var / 2000) * 0.5
+        else:
+            center_penalty = 0
+
+        # Yakuniy ball
+        score = (
+            brightness / 255 * 0.15        # Yorqinlik (kam vaznli)
+            + diversity * 0.60              # Rang xilma-xilligi (asosiy)
+            - studio_penalty                # Bitta rang jazo
+            - center_penalty                # Markaziy diktor jazo
+        )
+        return score
+    except Exception:
+        return 0.0
+
+
+def extract_best_frame(video_path, out_path, n_frames=20):
+    """Videodan eng yaxshi (studiyasiz, voqeali) kadrni ajratib olish."""
     tmp_dir = os.path.join(TEMP_DIR, "thumb_frames")
     os.makedirs(tmp_dir, exist_ok=True)
+    # Eski fayllarni tozalash
+    for _f in os.listdir(tmp_dir):
+        if _f.endswith(".jpg"):
+            try: os.remove(os.path.join(tmp_dir, _f))
+            except: pass
+
     pattern = os.path.join(tmp_dir, "f%03d.jpg")
     try:
-        subprocess.run([
-            "ffmpeg", "-y", "-i", video_path,
-            "-vf", f"fps=1,select=not(mod(n\\,3))",
-            "-vframes", str(n_frames),
-            "-q:v", "2", pattern
-        ], capture_output=True, timeout=30)
+        # Videoning o'rtasidan oxirigacha ko'proq kadr olish
+        # (birinchi klip ko'pincha studio intro)
+        r = subprocess.run([
+            "ffprobe", "-v", "error",
+            "-show_entries", "format=duration",
+            "-of", "default=noprint_wrappers=1:nokey=1",
+            video_path
+        ], capture_output=True, timeout=10)
+        total = float(r.stdout.decode("utf-8", errors="replace").strip() or "60")
     except Exception:
-        return None
+        total = 60
+
+    # Birinchi 10% ni o'tkazib yuborish (studio intro), o'rtadan boshlab
+    skip_sec = max(5, total * 0.10)
+    subprocess.run([
+        "ffmpeg", "-y",
+        "-ss", str(skip_sec),       # Boshidan o'tkazib yuborish
+        "-i", video_path,
+        "-vf", "fps=1",
+        "-vframes", str(n_frames),
+        "-q:v", "2", pattern
+    ], capture_output=True, timeout=30)
 
     frames = sorted([
         os.path.join(tmp_dir, f)
@@ -1969,25 +2060,14 @@ def extract_best_frame(video_path, out_path, n_frames=12):
     if not frames:
         return None
 
-    # Har kadrning yorqinligi va rangliligi
-    best, best_score = frames[0], -1
+    # Har kadrni baholash
+    scored = []
     for fp in frames:
-        try:
-            img = Image.open(fp).convert("RGB")
-            img.thumbnail((320, 180))
-            pixels = list(img.getdata())
-            brightness = sum(r + g + b for r, g, b in pixels) / (len(pixels) * 3)
-            # Rangliligi: R-G-B farqlari
-            colorfulness = sum(
-                abs(r - g) + abs(g - b) + abs(r - b)
-                for r, g, b in pixels
-            ) / len(pixels)
-            score = brightness * 0.4 + colorfulness * 0.6
-            if score > best_score:
-                best_score = score
-                best = fp
-        except Exception:
-            continue
+        s = _frame_score(fp)
+        scored.append((s, fp))
+
+    scored.sort(reverse=True)
+    best = scored[0][1]
 
     try:
         import shutil
