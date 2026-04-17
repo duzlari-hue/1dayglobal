@@ -272,24 +272,50 @@ def process_queue():
                 os.rename(qfile, qfile.replace(".json", "_no_video.json"))
                 continue
 
-            # ── Uch tilda video ───────────────────────────────
-            # ── UZ joy nomlarini tuzatish (Ирон→Эрон, Пакистон→Покистон va h.k.)
+            # ── Sarlavhalarni tekshirish va tuzatish ─────────────
             try:
                 import sys as _sys
                 _sys.path.insert(0, "../TELEGRAM")
-                from translator import _apply_uz_places, lat2cyr
+                from translator import _apply_uz_places, lat2cyr, _fix_title_only
                 _CYR_UZ = "абвгдеёжзийклмнопрстуфхцчшщъыьэюяўқғҳАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯЎҚҒҲ"
-                uz_sarlavha = sarlavhalar.get("uz", "")
-                if uz_sarlavha:
-                    # Lotin bo'lsa — kirillga
-                    letters = [c for c in uz_sarlavha if c.isalpha()]
-                    if letters:
-                        cyr_n = sum(1 for c in letters if c in _CYR_UZ)
-                        if cyr_n / len(letters) < 0.60:
-                            uz_sarlavha = lat2cyr(uz_sarlavha)
-                    sarlavhalar["uz"] = _apply_uz_places(uz_sarlavha)
+
+                def _is_corrupt(text, lang_code):
+                    """Sarlavha buzilganmi: lotin harflar aralashgan yoki inglizcha."""
+                    if not text or len(text.strip()) < 5:
+                        return True
+                    alpha = [c for c in text if c.isalpha()]
+                    if not alpha:
+                        return True
+                    latin_n = sum(1 for c in alpha if c.isascii())
+                    # 15% dan ko'p lotin harf bo'lsa — buzilgan
+                    if latin_n / len(alpha) > 0.15:
+                        return True
+                    # UZ/RU uchun kiriллcha bo'lishi shart
+                    if lang_code in ("uz", "ru"):
+                        cyr_n = sum(1 for c in alpha if c in _CYR_UZ)
+                        if cyr_n / len(alpha) < 0.60:
+                            return True
+                    return False
+
+                for fix_lang in ("uz", "ru", "en"):
+                    val = sarlavhalar.get(fix_lang, "")
+                    if _is_corrupt(val, fix_lang):
+                        log.warning(f"  🔧 {fix_lang.upper()} sarlavha buzilgan: '{val[:50]}' — qayta tarjima...")
+                        fixed = _fix_title_only(title, fix_lang)
+                        if fixed and not _is_corrupt(fixed, fix_lang):
+                            sarlavhalar[fix_lang] = fixed
+                            log.info(f"  ✓ {fix_lang.upper()} tuzatildi: '{fixed[:50]}'")
+                        else:
+                            log.warning(f"  ✗ {fix_lang.upper()} tuzatilmadi — bo'sh qoldirildi")
+                            sarlavhalar[fix_lang] = ""
+
+                # UZ joy nomlarini tuzatish
+                uz_s = sarlavhalar.get("uz", "")
+                if uz_s:
+                    sarlavhalar["uz"] = _apply_uz_places(uz_s)
+
             except Exception as _e:
-                log.debug(f"uz joy nomi tuzatish xato: {_e}")
+                log.debug(f"Sarlavha tuzatish xato: {_e}")
 
             any_success = False
             for lang in ["en", "ru", "uz"]:
