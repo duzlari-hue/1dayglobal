@@ -413,9 +413,9 @@ Return ONLY valid JSON, no extra text, no markdown:
   "sarlavha_en": "English headline 5-8 words, sentence case (only first word and proper nouns capitalized). Example: 'Trump announces new tariffs on European goods'",
   "jumla1_en": "Main event 2 sentences in English",
   "jumla2_en": "Additional details 2 sentences in English",
-  "script_uz": "Efirda 1KUN Global. [450-500 so'z, SOF O'ZBEK LOTIN tilida — bu TTS uchun. Ruscha so'z EMAS. Xorijiy nomlar: Trump=Tramp, Biden=Bayden, Netanyahu=Netanyaxu. Kontekst, tarix, tafsilot qo'sh.]",
-  "script_ru": "В эфире 1ДЕНЬ Global. [450-500 слов на русском языке. Добавь контекст, историю, детали.] Это был 1ДЕНЬ Global. До следующих новостей.",
-  "script_en": "This is 1DAY Global. [450-500 words in English. Add context, history, details.] That was 1DAY Global. Stay tuned for more.",
+  "script_uz": "[450-500 so'z, SOF O'ZBEK LOTIN tilida — bu TTS uchun. Intro/outro yozma. Ruscha so'z EMAS. Xorijiy nomlar: Trump=Tramp, Biden=Bayden, Netanyahu=Netanyaxu. Yangilik mazmunini, kontekstini, tarixini va tafsilotlarini yoz.]",
+  "script_ru": "[450-500 слов на русском языке. Без вступления и заключения типа 'В эфире...'. Добавь контекст, историю, детали события.]",
+  "script_en": "[450-500 words in English. No intro/outro phrases. Add context, background and details about the event.]",
   "daraja": "muhim OR tezkor OR xabar",
   "hook_uz": "Thumbnail учун қисқа ЎЗБЕК КИРИЛЛ жумла, 3-5 сўз, ҳайратланарли ёки шошилинч. Намуна: 'Дунё ларзага келди!' ёки 'Ҳаммаси ўзгарди'",
   "hook_ru": "Короткая фраза для thumbnail 3-5 слов, интригующая. Пример: 'Мир изменился навсегда!' или 'Это меняет всё'",
@@ -474,19 +474,20 @@ RULES:
         data = parse_json(groq_ask(prompt, max_tokens=3000))
     except Exception as e:
         log.warning(f"Groq tarjima xato: {e}")
+        # Fallback: sarlavha_uz bo'sh — lat2cyr(inglizcha) axlat hosil qiladi
         data = {
-            "sarlavha_uz":  lat2cyr(title[:50]),
-            "jumla1_uz":    lat2cyr(title),
+            "sarlavha_uz":  "",           # Bo'sh — keyin retry qilinadi
+            "jumla1_uz":    "",
             "jumla2_uz":    "",
-            "sarlavha_ru":  title[:50],
+            "sarlavha_ru":  title[:80],
             "jumla1_ru":    title,
             "jumla2_ru":    "",
-            "sarlavha_en":  title[:50],
+            "sarlavha_en":  title[:80],
             "jumla1_en":    title,
             "jumla2_en":    "",
-            "script_uz":    f"{title}",
-            "script_ru":    f"{title} Это был 1ДЕНЬ Global. До следующих новостей.",
-            "script_en":    f"{title} That was 1DAY Global. Stay tuned for more.",
+            "script_uz":    "",           # Bo'sh — extend_script inglizchani uzaytirmaydi
+            "script_ru":    title,
+            "script_en":    title,
             "daraja":       "xabar",
             "hashtag_uz":   "#Янгилик #Дунё #1КУН",
             "hashtag_ru":   "#Новости #Мир #1День",
@@ -620,11 +621,11 @@ RULES:
                 data[lang_key] = fixed
                 log.info(f"✅ {lang_key} tuzatildi: '{fixed}'")
             else:
-                # Hali ham xato — UZ uchun lotin→kirill fallback
+                # Hali ham xato — UZ uchun bo'sh qoldirish yaxshi
+                # (lat2cyr(inglizcha) = "Трумп агаин фумес" kabi axlat hosil qiladi!)
                 if lang_code == "uz":
-                    fb = lat2cyr(en_title[:80])
-                    data[lang_key] = fb
-                    log.warning(f"⚠️  {lang_key} fallback (lat2cyr): '{fb[:60]}'")
+                    data[lang_key] = ""   # Bo'sh yaxshi — axlatdan afzal
+                    log.warning(f"⚠️  {lang_key} bo'sh qoldirildi (lat2cyr axlat bo'lmasin)")
                 else:
                     data[lang_key] = en_title[:80]
                     log.warning(f"⚠️  {lang_key} fallback (original): '{en_title[:60]}'")

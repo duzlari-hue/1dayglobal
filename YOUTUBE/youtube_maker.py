@@ -1149,38 +1149,74 @@ def get_music():
 
 
 # ── Matnni uzaytirish (Claude API) ───────────────────────────
+_INTRO_PATTERNS = [
+    # UZ (lotin)
+    r"^Efirda\s+1KUN\s+Global\.?\s*",
+    r"^Siz\s+bilan\s+1\s+[Kk]un\s+bo['']ldi\.?\s*",
+    # RU
+    r"^В\s+эфире\s+1ДЕНЬ\s+Global\.?\s*",
+    r"^Это\s+был\s+1ДЕНЬ\s+Global\.?\s*",
+    # EN
+    r"^This\s+is\s+1DAY\s+Global\.?\s*",
+    r"^That\s+was\s+1DAY\s+Global\.?\s*",
+]
+_OUTRO_PATTERNS = [
+    r"Siz\s+bilan\s+1\s+[Kk]un\s+bo['']ldi[^.]*\.\s*$",
+    r"Kelgusi\s+yangiliklarda\s+ko['']rishamiz\.\s*$",
+    r"До\s+следующих\s+новостей\.\s*$",
+    r"Stay\s+tuned\s+for\s+more\.\s*$",
+    r"That\s+was\s+1DAY\s+Global[^.]*\.\s*$",
+    r"Это\s+был\s+1ДЕНЬ\s+Global[^.]*\.\s*$",
+]
+
+def _strip_intro_outro(text: str) -> str:
+    """Skriptdan intro va outro iboralarini olib tashlash."""
+    for pat in _INTRO_PATTERNS:
+        text = re.sub(pat, "", text, flags=re.IGNORECASE | re.MULTILINE).lstrip()
+    for pat in _OUTRO_PATTERNS:
+        text = re.sub(pat, "", text, flags=re.IGNORECASE | re.MULTILINE).rstrip()
+    return text.strip()
+
+
 def extend_script(text, lang="uz", target_words=400):
-    """Qisqa matni 2-3 daqiqalik narration uchun uzaytirish.
-    Avval Groq, bo'lmasa OpenRouter ishlatiladi."""
+    """Qisqa matni 2-3 daqiqalik narration uchun uzaytirish."""
+    # Avval intro/outro tozalash
+    text = _strip_intro_outro(text)
+
     word_count = len(text.split())
     if word_count >= target_words:
         print(f"   Matn yetarli: {word_count} so'z")
         return text
 
+    # UZ: Matn lotin yozuvida bo'lishi shart (kirill emas)
+    if lang == "uz":
+        _cyr_chars = "абвгдеёжзийклмнопрстуфхцчшщъыьэюяўқғҳАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯЎҚҒҲ"
+        alpha = [c for c in text if c.isalpha()]
+        if alpha:
+            cyr_ratio = sum(1 for c in alpha if c in _cyr_chars) / len(alpha)
+            if cyr_ratio > 0.5:
+                print(f"   ⚠️  script_uz kiriллda — extend o'tkazildi")
+                return text  # Kirill matn — extend qilmaymiz
+
     prompts = {
         "uz": (
             f"Bu yangilik matnini kamida {target_words} so'zga uzaytir. "
             "Faqat tayyor matnni qaytargin, boshqa hech narsa yozma. "
-            "Sof o'zbek lotin tilida yoz, ruscha so'z ishlatma. "
+            "Sof o'zbek lotin tilida yoz — na kirill, na ruscha. "
             "Jurnalistik uslubda kontekst, tarix va tafsilotlar qo'sh. "
-            "Matn 'Efirda 1KUN Global.' bilan boshlanib, "
-            "'Siz bilan 1 Kun bo'ldi. Kelgusi yangiliklarda ko'rishamiz.' bilan tugasin.\n\n"
+            "Intro ('Efirda 1KUN...') va outro ('Siz bilan 1 Kun bo'ldi...') YOZMA.\n\n"
             f"{text}"
         ),
         "ru": (
             f"Расширь этот новостной текст до минимум {target_words} слов. "
-            "Верни только текст без пояснений. "
-            "Добавь контекст, предысторию и детали в журналистском стиле. "
-            "Текст должен начинаться с 'В эфире 1ДЕНЬ Global.' и заканчиваться "
-            "'Это был 1ДЕНЬ Global. До следующих новостей.'\n\n"
+            "Верни только текст без пояснений и без вступлений типа 'В эфире...'. "
+            "Добавь контекст, предысторию и детали в журналистском стиле.\n\n"
             f"{text}"
         ),
         "en": (
             f"Expand this news text to at least {target_words} words. "
-            "Return only the expanded text, nothing else. "
-            "Add context, background and details in journalistic style. "
-            "Text must start with 'This is 1DAY Global.' and end with "
-            "'That was 1DAY Global. Stay tuned for more.'\n\n"
+            "Return only the expanded text. No intro/outro phrases. "
+            "Add context, background and details in journalistic style.\n\n"
             f"{text}"
         ),
     }
@@ -1200,7 +1236,8 @@ def extend_script(text, lang="uz", target_words=400):
                 timeout=30
             )
             if r.ok:
-                extended = r.json()["choices"][0]["message"]["content"].strip()
+                extended = _strip_intro_outro(
+                    r.json()["choices"][0]["message"]["content"].strip())
                 print(f"   Groq: {word_count} -> {len(extended.split())} so'z")
                 return extended
         except Exception as e:
@@ -1220,7 +1257,8 @@ def extend_script(text, lang="uz", target_words=400):
                 timeout=30
             )
             if r.ok:
-                extended = r.json()["choices"][0]["message"]["content"].strip()
+                extended = _strip_intro_outro(
+                    r.json()["choices"][0]["message"]["content"].strip())
                 print(f"   OpenRouter: {word_count} -> {len(extended.split())} so'z")
                 return extended
         except Exception as e:
@@ -2269,9 +2307,35 @@ def youtube_pipeline(data):
 
     print(f"  1  Video kliplar: {len(yt_clips)} ta")
 
-    # 2. Matn uzaytirish — ~150 so'z/daqiqa, 2.5 daqiqa = 375 so'z
+    # 2. Matn tekshiruv va uzaytirish
     print("  2  Matn tekshirilmoqda...")
     lang = data.get("lang", "uz")
+
+    # Intro/outro iboralarni tozalash (eski queue fayllarida qolgan bo'lishi mumkin)
+    script = _strip_intro_outro(script)
+
+    # UZ skript kirill bo'lsa — TTS xato o'qiydi ("Трумп агаин фумес" kabi)
+    if lang == "uz" and script:
+        _cyr_chars = "абвгдеёжзийклмнопрстуфхцчшщъыьэюяўқғҳАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯЎҚҒҲ"
+        alpha = [c for c in script if c.isalpha()]
+        if alpha:
+            cyr_r = sum(1 for c in alpha if c in _cyr_chars) / len(alpha)
+            if cyr_r > 0.4:
+                print(f"   ⚠️  UZ script kiriллda ({cyr_r:.0%}) — script o'tkazildi, jumla ishlatiladi")
+                script = ""  # Kirill UZ scripti TTS uchun yaroqsiz
+
+    # Skript bo'sh bo'lsa — jumla1+jumla2 dan qisqa matn yaratish
+    if not script or len(script.split()) < 30:
+        j1 = data.get("jumla1", "")
+        j2 = data.get("jumla2", "")
+        if lang == "uz":
+            # UZ: jumla1/jumla2 kiriللda, lekin TTS lotin talab qiladi
+            # sarlavhani ham qo'shib, extend_script lotin ga tarjima qiladi
+            script = f"{sarlavha}. {j1} {j2}".strip()
+        else:
+            script = f"{sarlavha}. {j1} {j2}".strip()
+        print(f"   ℹ️  Script bo'sh — jumla matnidan foydalaniladi ({len(script.split())} so'z)")
+
     script = extend_script(script, lang=lang, target_words=375)
     word_count = len(script.split())
     print(f"     So'zlar: {word_count} (~{word_count//150:.1f} daqiqa)")
