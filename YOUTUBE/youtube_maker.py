@@ -2185,10 +2185,12 @@ def make_shorts_clip(video_path, sarlavha, hook, lang="uz",
             font_bold = _ffmpeg_font(_fb)
             break
 
-    # Kirill matnni textfile orqali uzatish (subprocess argument sifatida xavfsiz)
-    tmp_hook_file     = os.path.join(TEMP_DIR, "shorts_hook.txt")
-    tmp_sarlavha_file = os.path.join(TEMP_DIR, "shorts_title.txt")
     os.makedirs(TEMP_DIR, exist_ok=True)
+
+    # Absolute yo'llar (ffmpeg nisbiy yo'lni topa olmaydi)
+    abs_temp     = os.path.abspath(TEMP_DIR)
+    tmp_hook_file     = os.path.join(abs_temp, "shorts_hook.txt")
+    tmp_sarlavha_file = os.path.join(abs_temp, "shorts_title.txt")
 
     hook_text     = (hook or "").strip()[:40].upper()
     sarlavha_text = (sarlavha or "").strip()[:60]
@@ -2198,12 +2200,18 @@ def make_shorts_clip(video_path, sarlavha, hook, lang="uz",
     with open(tmp_hook_file,     "w", encoding="utf-8") as f: f.write(hook_text)
     with open(tmp_sarlavha_file, "w", encoding="utf-8") as f: f.write(sarlavha_text)
 
-    # Fayl yo'llarini ffmpeg filter string uchun ekranlash
+    # Fayl yo'llarini ffmpeg filter string uchun ekranlash (absolute, forward slash)
     def _esc_path(p):
-        return p.replace("\\", "/").replace(":", "\\:").replace("'", "\\'")
+        return os.path.abspath(p).replace("\\", "/").replace(":", "\\:")
 
     hook_tf     = _esc_path(tmp_hook_file)
     sarlavha_tf = _esc_path(tmp_sarlavha_file)
+
+    # Chiqish fayli — kiriллcha nom ffmpeg'da "Invalid argument" beradi
+    # ASCII vaqtinchalik nom ishlatib, keyin rename qilamiz
+    ts_id       = datetime.now().strftime("%Y%m%d_%H%M%S")
+    tmp_out     = os.path.join(abs_temp, f"shorts_tmp_{ts_id}.mp4")
+    final_out   = out_path  # Kirill nom — rename qilinadi
 
     # Filter chain
     vf_parts = [
@@ -2223,21 +2231,20 @@ def make_shorts_clip(video_path, sarlavha, hook, lang="uz",
         f"shadowcolor=black:shadowx=2:shadowy=2",
     ]
 
-    # Hook matni — textfile (kirill xavfsiz)
+    # Hook matni — textfile absolute yo'l bilan
     if hook_text:
         vf_parts.append(
-            f"drawtext=fontfile={font_bold}:textfile={hook_tf}:"
+            f"drawtext=fontfile={font_bold}:textfile='{hook_tf}':"
             f"fontsize=60:fontcolor=0xFFD200:x=(w-text_w)/2:y={SH-330}:"
             f"shadowcolor=black:shadowx=3:shadowy=3"
         )
 
-    # Sarlavha — textfile (kirill xavfsiz)
+    # Sarlavha — textfile absolute yo'l, line_spacing olib tashlandi (eski ffmpeg-da ishlamaydi)
     if sarlavha_text:
         vf_parts.append(
-            f"drawtext=fontfile={font_bold}:textfile={sarlavha_tf}:"
+            f"drawtext=fontfile={font_bold}:textfile='{sarlavha_tf}':"
             f"fontsize=48:fontcolor=white:x=(w-text_w)/2:y={SH-240}:"
-            f"shadowcolor=black:shadowx=3:shadowy=3:"
-            f"line_spacing=10"
+            f"shadowcolor=black:shadowx=3:shadowy=3"
         )
 
     vf = ",".join(vf_parts)
@@ -2251,8 +2258,14 @@ def make_shorts_clip(video_path, sarlavha, hook, lang="uz",
             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
             "-c:a", "aac", "-b:a", "128k",
             "-movflags", "+faststart",
-            out_path
+            tmp_out          # ASCII vaqtinchalik nom
         ], capture_output=True, timeout=180)
+
+        # ASCII → final (kirill) nomga rename
+        if os.path.exists(tmp_out) and os.path.getsize(tmp_out) > 500_000:
+            import shutil
+            shutil.move(tmp_out, final_out)
+            out_path = final_out
 
         if r.returncode != 0:
             err = r.stderr.decode("utf-8", errors="replace")[-500:]
