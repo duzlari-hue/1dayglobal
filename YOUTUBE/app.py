@@ -150,6 +150,10 @@ def _title_ok(text: str, lang: str) -> bool:
 
 def _repair_title(bad_title: str, original_en: str, lang: str) -> str:
     """Sarlavhani alohida AI so'rov bilan tuzatish."""
+    # EN uchun: asl inglizcha sarlavha yaxshi bo'lsa — uni qaytarish (AI so'rovsiz)
+    if lang == "en" and original_en and len(original_en.strip()) >= 8:
+        log.info(f"  🔧 EN sarlavha: asl sarlavhani qaytarmoqda: '{original_en[:60]}'")
+        return original_en.strip()[:100]
     try:
         import sys
         sys.path.insert(0, "../TELEGRAM")
@@ -280,34 +284,44 @@ def process_queue():
                 _CYR_UZ = "абвгдеёжзийклмнопрстуфхцчшщъыьэюяўқғҳАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯЎҚҒҲ"
 
                 def _is_corrupt(text, lang_code):
-                    """Sarlavha buzilganmi: lotin harflar aralashgan yoki inglizcha."""
+                    """Sarlavha buzilganmi: noto'g'ri alifbo yoki bo'sh."""
                     if not text or len(text.strip()) < 5:
                         return True
                     alpha = [c for c in text if c.isalpha()]
                     if not alpha:
                         return True
-                    latin_n = sum(1 for c in alpha if c.isascii())
-                    # 15% dan ko'p lotin harf bo'lsa — buzilgan
-                    if latin_n / len(alpha) > 0.15:
-                        return True
-                    # UZ/RU uchun kiriллcha bo'lishi shart
                     if lang_code in ("uz", "ru"):
+                        # Kirill majburiy: 15%+ lotin = buzilgan
+                        latin_n = sum(1 for c in alpha if c.isascii())
+                        if latin_n / len(alpha) > 0.15:
+                            return True
                         cyr_n = sum(1 for c in alpha if c in _CYR_UZ)
                         if cyr_n / len(alpha) < 0.60:
+                            return True
+                    elif lang_code == "en":
+                        # Inglizcha: kirill ko'p bo'lsa — buzilgan
+                        cyr_n = sum(1 for c in alpha if c in _CYR_UZ)
+                        if cyr_n / len(alpha) > 0.30:
                             return True
                     return False
 
                 for fix_lang in ("uz", "ru", "en"):
                     val = sarlavhalar.get(fix_lang, "")
-                    if _is_corrupt(val, fix_lang):
-                        log.warning(f"  🔧 {fix_lang.upper()} sarlavha buzilgan: '{val[:50]}' — qayta tarjima...")
-                        fixed = _fix_title_only(title, fix_lang)
-                        if fixed and not _is_corrupt(fixed, fix_lang):
-                            sarlavhalar[fix_lang] = fixed
-                            log.info(f"  ✓ {fix_lang.upper()} tuzatildi: '{fixed[:50]}'")
-                        else:
-                            log.warning(f"  ✗ {fix_lang.upper()} tuzatilmadi — bo'sh qoldirildi")
-                            sarlavhalar[fix_lang] = ""
+                    if not _is_corrupt(val, fix_lang):
+                        continue  # Yaxshi — o'tkazib yuborish
+                    # EN: agar asl sarlavha o'zi inglizcha bo'lsa — uni ishlatish
+                    if fix_lang == "en" and title and not _is_corrupt(title, "en"):
+                        log.info(f"  ℹ️  EN sarlavha buzilgan, asl sarlavhani ishlatmoqda: '{title[:50]}'")
+                        sarlavhalar["en"] = title[:100]
+                        continue
+                    log.warning(f"  🔧 {fix_lang.upper()} sarlavha buzilgan: '{val[:50]}' — qayta tarjima...")
+                    fixed = _fix_title_only(title, fix_lang)
+                    if fixed and not _is_corrupt(fixed, fix_lang):
+                        sarlavhalar[fix_lang] = fixed
+                        log.info(f"  ✓ {fix_lang.upper()} tuzatildi: '{fixed[:50]}'")
+                    else:
+                        log.warning(f"  ✗ {fix_lang.upper()} tuzatilmadi — bo'sh qoldirildi")
+                        sarlavhalar[fix_lang] = ""
 
                 # UZ joy nomlarini tuzatish
                 uz_s = sarlavhalar.get("uz", "")
