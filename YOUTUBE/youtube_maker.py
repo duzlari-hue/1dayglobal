@@ -2218,22 +2218,103 @@ def make_youtube_thumbnail(video_path, sarlavha, hook, lang="uz",
 # ══════════════════════════════════════════════════════════════
 # SHORTS GENERATOR — vertical 9:16 clip from long video
 # ══════════════════════════════════════════════════════════════
+def _make_shorts_overlay(sarlavha, hook, lang, SW=1080, SH=1920):
+    """
+    PIL orqali Shorts matn overlay rasmi yaratish (1080x1920, RGBA).
+    drawtext ishlatilmaydi — kirill muammosi yo'q.
+    """
+    overlay = Image.new("RGBA", (SW, SH), (0, 0, 0, 0))
+    draw    = ImageDraw.Draw(overlay)
+
+    fb = _find_cyr_font(bold=True)  or "arialbd.ttf"
+    fr = _find_cyr_font(bold=False) or "arial.ttf"
+
+    # Pastki qorong'i gradient (matn zonasi)
+    for y in range(SH - 420, SH):
+        alpha = int(200 * (y - (SH - 420)) / 420)
+        draw.line([(0, y), (SW, y)], fill=(5, 10, 22, alpha))
+
+    # Yuqori soya
+    for y in range(0, 180):
+        alpha = int(160 * (1 - y / 180))
+        draw.line([(0, y), (SW, y)], fill=(0, 0, 0, alpha))
+
+    # Chap qizil aksent
+    for y in range(SH):
+        t = y / SH
+        r = int(204 * (1-t) + 240 * t)
+        g = int(0   * (1-t) + 165 * t)
+        b = int(0   * (1-t) + 0   * t)
+        draw.line([(0, y), (7, y)], fill=(r, g, b, 230))
+
+    # Pastki oltin chiziq
+    draw.rectangle([(0, SH - 8), (SW, SH)], fill=(240, 165, 0, 255))
+
+    # Brend badge (yuqori chap)
+    brand_txt = {"uz": "1КУН", "ru": "1ДЕНЬ", "en": "1DAY"}.get(lang, "1KUN")
+    try:
+        f_badge = ImageFont.truetype(fb, 40)
+        f_sub   = ImageFont.truetype(fr, 18)
+    except Exception:
+        f_badge = f_sub = ImageFont.load_default()
+
+    draw.rectangle([(15, 15), (180, 75)], fill=(0, 0, 0, 200))
+    draw.rectangle([(15, 15), (180, 75)], outline=(240, 165, 0, 255), width=2)
+    draw.text((97, 30), brand_txt,    font=f_badge, fill=(240, 165, 0, 255), anchor="mt")
+    draw.text((97, 62), "GLOBAL",     font=f_sub,   fill=(255, 255, 255, 200), anchor="mt")
+
+    # Hook matni (sariq, yuqoriroq)
+    hook_clean = (hook or "").strip().upper()
+    if hook_clean:
+        try:
+            f_hook = ImageFont.truetype(fb, 58)
+        except Exception:
+            f_hook = ImageFont.load_default()
+        # Ko'lanka
+        draw.text((SW//2 + 3, SH - 340 + 3), hook_clean,
+                  font=f_hook, fill=(0, 0, 0, 180), anchor="mm")
+        draw.text((SW//2, SH - 340), hook_clean,
+                  font=f_hook, fill=(255, 210, 0, 255), anchor="mm")
+
+    # Sarlavha (oq, 2 qatorga)
+    sarlavha_clean = (sarlavha or "").strip()
+    if sarlavha_clean:
+        try:
+            f_title = ImageFont.truetype(fb, 52)
+        except Exception:
+            f_title = ImageFont.load_default()
+        words = sarlavha_clean.split()
+        mid   = max(1, len(words) // 2)
+        line1 = " ".join(words[:mid])
+        line2 = " ".join(words[mid:])
+        for line, y in [(line1, SH - 255), (line2, SH - 190)]:
+            if not line:
+                continue
+            draw.text((SW//2 + 2, y + 2), line,
+                      font=f_title, fill=(0, 0, 0, 180), anchor="mm")
+            draw.text((SW//2, y), line,
+                      font=f_title, fill=(255, 255, 255, 255), anchor="mm")
+
+    return overlay
+
+
 def make_shorts_clip(video_path, sarlavha, hook, lang="uz",
                      duration=58, out_path=None):
     """
-    Uzun videodan 58 soniyalik Shorts versiyasi:
-    - 16:9 → 9:16 (markaziy crop)
-    - Yuqorida hook matni
-    - Pastda sarlavha
-    - 1080x1920 px
+    Uzun videodan 58 soniyalik Shorts versiyasi (1080x1920).
+    Matn overlay: PIL (drawtext emas — kirill/Windows muammosi yo'q).
+    Jarayon:
+      1. ffmpeg: video kesi + crop 9:16 → temp_raw.mp4 (matnsiz)
+      2. PIL: overlay rasmi (matn, badge, gradient)
+      3. ffmpeg: video + overlay PNG → final Shorts
     """
     if out_path is None:
         base = os.path.splitext(video_path)[0]
         out_path = base + "_shorts.mp4"
 
-    SW, SH = 1080, 1920   # Shorts o'lchami
+    SW, SH = 1080, 1920
 
-    # Manba video uzunligini aniqlash
+    # Manba uzunligini aniqlash
     try:
         probe = subprocess.run([
             "ffprobe", "-v", "error",
@@ -2250,126 +2331,75 @@ def make_shorts_clip(video_path, sarlavha, hook, lang="uz",
         print("   ⚠️  Video juda qisqa — Shorts yaratilmadi")
         return None
 
-    # Font yo'li (Windows) — ffmpeg uchun: C\:/Windows/Fonts/... formatida
-    def _ffmpeg_font(p):
-        """Windows yo'lini ffmpeg filter string formatiga o'girish."""
-        return p.replace("\\", "/").replace(":", "\\:")
-
-    # arialbd.ttf — eng ishonchli, kirill qo'llab-quvvatlaydi, ffmpeg bilan muammosiz
-    font_bold = _ffmpeg_font("C:\\Windows\\Fonts\\arialbd.ttf")
-    for _fb in [
-        "C:\\Windows\\Fonts\\arialbd.ttf",       # Birinchi — eng ishonchli
-        "C:\\Windows\\Fonts\\DejaVuSans-Bold.ttf",
-        "C:\\Windows\\Fonts\\calibrib.ttf",
-    ]:
-        if os.path.exists(_fb):
-            font_bold = _ffmpeg_font(_fb)
-            break
-
     os.makedirs(TEMP_DIR, exist_ok=True)
-
-    # Absolute yo'llar (ffmpeg nisbiy yo'lni topa olmaydi)
-    abs_temp     = os.path.abspath(TEMP_DIR)
-    tmp_hook_file     = os.path.join(abs_temp, "shorts_hook.txt")
-    tmp_sarlavha_file = os.path.join(abs_temp, "shorts_title.txt")
-
-    hook_text     = (hook or "").strip()[:40].upper()
-    sarlavha_text = (sarlavha or "").strip()[:60]
-    brand_txt     = {"uz": "1KUN GLOBAL", "ru": "1DEN GLOBAL", "en": "1DAY GLOBAL"}.get(lang, "1KUN")
-
-    # Matnlarni faylga yozish (UTF-8, kirill xavfsiz)
-    with open(tmp_hook_file,     "w", encoding="utf-8") as f: f.write(hook_text)
-    with open(tmp_sarlavha_file, "w", encoding="utf-8") as f: f.write(sarlavha_text)
-
-    # Fayl yo'llarini ffmpeg filter string uchun ekranlash (absolute, forward slash)
-    def _esc_path(p):
-        return os.path.abspath(p).replace("\\", "/").replace(":", "\\:")
-
-    hook_tf     = _esc_path(tmp_hook_file)
-    sarlavha_tf = _esc_path(tmp_sarlavha_file)
-
-    # Chiqish fayli — kiriллcha nom ffmpeg'da "Invalid argument" beradi
-    # ASCII vaqtinchalik nom ishlatib, keyin rename qilamiz
-    ts_id       = datetime.now().strftime("%Y%m%d_%H%M%S")
-    tmp_out     = os.path.join(abs_temp, f"shorts_tmp_{ts_id}.mp4")
-    final_out   = out_path  # Kirill nom — rename qilinadi
-
-    # Filter chain
-    vf_parts = [
-        "crop=ih*9/16:ih",
-        f"scale={SW}:{SH}",
-        # Pastki qorong'i qatlam
-        f"drawbox=x=0:y={SH-380}:w={SW}:h=380:color=black@0.70:t=fill",
-        # Yuqori soya
-        f"drawbox=x=0:y=0:w={SW}:h=200:color=black@0.55:t=fill",
-        # Chap qizil aksent chiziq
-        f"drawbox=x=0:y=0:w=8:h={SH}:color=0xff2200@0.9:t=fill",
-        # Pastki oltin chiziq
-        f"drawbox=x=0:y={SH-8}:w={SW}:h=8:color=0xf0a500:t=fill",
-        # 1KUN badge (yuqori chap) — ASCII xavfsiz
-        f"drawtext=fontfile={font_bold}:text='{brand_txt}':"
-        f"fontsize=42:fontcolor=0xF0A500:x=30:y=40:"
-        f"shadowcolor=black:shadowx=2:shadowy=2",
-    ]
-
-    # Hook matni — textfile (tirnoqsiz, markazlash: (w-tw)/2)
-    if hook_text:
-        vf_parts.append(
-            f"drawtext=fontfile={font_bold}:textfile={hook_tf}:"
-            f"fontsize=60:fontcolor=0xFFD200"
-            f":x=(w-tw)/2:y={SH-330}"
-            f":shadowcolor=black:shadowx=3:shadowy=3"
-        )
-
-    # Sarlavha — textfile (tirnoqsiz)
-    if sarlavha_text:
-        vf_parts.append(
-            f"drawtext=fontfile={font_bold}:textfile={sarlavha_tf}:"
-            f"fontsize=48:fontcolor=white"
-            f":x=(w-tw)/2:y={SH-240}"
-            f":shadowcolor=black:shadowx=3:shadowy=3"
-        )
-
-    vf = ",".join(vf_parts)
+    abs_temp  = os.path.abspath(TEMP_DIR)
+    ts_id     = datetime.now().strftime("%Y%m%d_%H%M%S")
+    tmp_raw   = os.path.join(abs_temp, f"shorts_raw_{ts_id}.mp4")
+    tmp_ovl   = os.path.join(abs_temp, f"shorts_ovl_{ts_id}.png")
+    tmp_out   = os.path.join(abs_temp, f"shorts_out_{ts_id}.mp4")
 
     try:
-        r = subprocess.run([
+        # ── 1. Video kesi + crop (matnsiz) ─────────────────────
+        r1 = subprocess.run([
             "ffmpeg", "-y",
             "-i", video_path,
             "-t", str(clip_dur),
-            "-vf", vf,
+            "-vf", f"crop=ih*9/16:ih,scale={SW}:{SH}",
             "-c:v", "libx264", "-preset", "fast", "-crf", "23",
             "-c:a", "aac", "-b:a", "128k",
             "-movflags", "+faststart",
-            tmp_out          # ASCII vaqtinchalik nom
+            tmp_raw
         ], capture_output=True, timeout=180)
 
-        # ASCII → final (kirill) nomga rename
+        if r1.returncode != 0:
+            err = r1.stderr.decode("utf-8", errors="replace")[-400:]
+            print(f"   ⚠️  Shorts crop xato:\n{err}")
+            return None
+
+        if not os.path.exists(tmp_raw) or os.path.getsize(tmp_raw) < 100_000:
+            print("   ⚠️  Shorts: crop fayl yaratilmadi")
+            return None
+
+        # ── 2. PIL overlay rasmi ────────────────────────────────
+        overlay = _make_shorts_overlay(sarlavha, hook, lang, SW, SH)
+        overlay.save(tmp_ovl, "PNG")
+
+        # ── 3. Video + overlay birlashtirish ────────────────────
+        r2 = subprocess.run([
+            "ffmpeg", "-y",
+            "-i", tmp_raw,
+            "-i", tmp_ovl,
+            "-filter_complex", "[0:v][1:v]overlay=0:0[v]",
+            "-map", "[v]", "-map", "0:a?",
+            "-c:v", "libx264", "-preset", "fast", "-crf", "22",
+            "-c:a", "aac", "-b:a", "128k",
+            "-movflags", "+faststart",
+            tmp_out
+        ], capture_output=True, timeout=180)
+
+        if r2.returncode != 0:
+            err = r2.stderr.decode("utf-8", errors="replace")[-400:]
+            print(f"   ⚠️  Shorts overlay xato:\n{err}")
+            return None
+
+        # ASCII temp → final nom (kirill bo'lishi mumkin)
         if os.path.exists(tmp_out) and os.path.getsize(tmp_out) > 500_000:
             import shutil
-            shutil.move(tmp_out, final_out)
-            out_path = final_out
-
-        if r.returncode != 0:
-            err = r.stderr.decode("utf-8", errors="replace")[-500:]
-            print(f"   ⚠️  ffmpeg shorts xato (rc={r.returncode}):\n{err}")
-
-        if os.path.exists(out_path) and os.path.getsize(out_path) > 500_000:
+            shutil.move(tmp_out, out_path)
             sz = os.path.getsize(out_path) / 1_048_576
             print(f"   📱 Shorts: {os.path.basename(out_path)} ({sz:.1f} MB)")
             return out_path
         else:
             print("   ⚠️  Shorts fayl yaratilmadi yoki juda kichik")
             return None
+
     except Exception as e:
         print(f"   ⚠️  Shorts xato: {e}")
         return None
     finally:
-        # Temp matn fayllarni tozalash
-        for _tf in [tmp_hook_file, tmp_sarlavha_file]:
+        for _f in [tmp_raw, tmp_ovl, tmp_out]:
             try:
-                if os.path.exists(_tf):
-                    os.remove(_tf)
+                if os.path.exists(_f): os.remove(_f)
             except Exception:
                 pass
 
