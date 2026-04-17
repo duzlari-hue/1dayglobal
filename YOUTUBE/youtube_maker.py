@@ -38,17 +38,42 @@ C_BLUE  = (  0, 85,170)
 C_YELLOW= (255,210,  0)
 
 
+def _find_cyr_font(bold=True):
+    """Kirill alifbosini qo'llab-quvvatlaydigan shrift topish (Windows)."""
+    candidates_bold = [
+        "C:\\Windows\\Fonts\\arialbd.ttf",      # Arial Bold — kirill bor
+        "C:\\Windows\\Fonts\\arial.ttf",
+        "C:\\Windows\\Fonts\\DejaVuSans-Bold.ttf",
+        "C:\\Windows\\Fonts\\seguibl.ttf",       # Segoe UI Black
+        "C:\\Windows\\Fonts\\segoeuib.ttf",      # Segoe UI Bold
+        "C:\\Windows\\Fonts\\calibrib.ttf",
+    ]
+    candidates_reg = [
+        "C:\\Windows\\Fonts\\arial.ttf",
+        "C:\\Windows\\Fonts\\DejaVuSans.ttf",
+        "C:\\Windows\\Fonts\\segoeui.ttf",
+        "C:\\Windows\\Fonts\\calibri.ttf",
+    ]
+    candidates = candidates_bold if bold else candidates_reg
+    for p in candidates:
+        if os.path.exists(p):
+            return p
+    return None
+
+
 def get_fonts():
+    fb = _find_cyr_font(bold=True)  or "arialbd.ttf"
+    fr = _find_cyr_font(bold=False) or "arial.ttf"
     try:
         return {
-            "brand":  ImageFont.truetype("arialbd.ttf", 26),
-            "title":  ImageFont.truetype("arialbd.ttf", 44),
-            "small":  ImageFont.truetype("arial.ttf",   19),
-            "ticker": ImageFont.truetype("arialbd.ttf", 22),
-            "break":  ImageFont.truetype("arialbd.ttf", 19),
-            "xl":     ImageFont.truetype("arialbd.ttf", 86),
-            "lg":     ImageFont.truetype("arialbd.ttf", 54),
-            "time":   ImageFont.truetype("arialbd.ttf", 30),
+            "brand":  ImageFont.truetype(fb, 26),
+            "title":  ImageFont.truetype(fb, 44),
+            "small":  ImageFont.truetype(fr, 19),
+            "ticker": ImageFont.truetype(fb, 22),
+            "break":  ImageFont.truetype(fb, 19),
+            "xl":     ImageFont.truetype(fb, 86),
+            "lg":     ImageFont.truetype(fb, 54),
+            "time":   ImageFont.truetype(fb, 30),
         }
     except Exception:
         f = ImageFont.load_default()
@@ -1990,6 +2015,8 @@ def make_youtube_thumbnail(video_path, sarlavha, hook, lang="uz",
 
     # 5. Brend badge — yuqori chap
     fonts = get_fonts()
+    _fb = _find_cyr_font(bold=True)  or "arialbd.ttf"
+    _fr = _find_cyr_font(bold=False) or "arial.ttf"
     badge_txt_lang = {"uz": "1КУН", "ru": "1ДЕНЬ", "en": "1DAY"}
     badge_txt = badge_txt_lang.get(lang, "1КУН")
     badge_sub = "GLOBAL NEWS"
@@ -1999,8 +2026,8 @@ def make_youtube_thumbnail(video_path, sarlavha, hook, lang="uz",
     draw.rectangle([(15, 12), (15+bw, 12+bh)], outline=C_GOLD, width=2)
     # Badge matn
     try:
-        f_badge  = ImageFont.truetype("arialbd.ttf", 26)
-        f_sub    = ImageFont.truetype("arial.ttf",   13)
+        f_badge  = ImageFont.truetype(_fb, 26)
+        f_sub    = ImageFont.truetype(_fr, 13)
     except Exception:
         f_badge = f_sub = ImageFont.load_default()
     bx = 15 + bw // 2
@@ -2014,7 +2041,7 @@ def make_youtube_thumbnail(video_path, sarlavha, hook, lang="uz",
     hook_clean = (hook or "").strip().upper()
     if hook_clean:
         try:
-            f_hook = ImageFont.truetype("arialbd.ttf", 34)
+            f_hook = ImageFont.truetype(_fb, 34)
         except Exception:
             f_hook = ImageFont.load_default()
         hx = W // 2
@@ -2026,8 +2053,8 @@ def make_youtube_thumbnail(video_path, sarlavha, hook, lang="uz",
     # 8. Asosiy sarlavha (oq, katta, 2 qatorga bo'linadi)
     sarlavha_clean = sarlavha.strip()
     try:
-        f_title = ImageFont.truetype("arialbd.ttf", 56)
-        f_title2 = ImageFont.truetype("arialbd.ttf", 48)
+        f_title  = ImageFont.truetype(_fb, 56)
+        f_title2 = ImageFont.truetype(_fb, 48)
     except Exception:
         f_title = f_title2 = ImageFont.load_default()
 
@@ -2079,8 +2106,8 @@ def make_shorts_clip(video_path, sarlavha, hook, lang="uz",
             "-show_entries", "format=duration",
             "-of", "default=noprint_wrappers=1:nokey=1",
             video_path
-        ], capture_output=True, text=True, timeout=15)
-        src_dur = float(probe.stdout.strip())
+        ], capture_output=True, timeout=15)
+        src_dur = float(probe.stdout.decode("utf-8", errors="replace").strip())
     except Exception:
         src_dur = 999
 
@@ -2089,63 +2116,77 @@ def make_shorts_clip(video_path, sarlavha, hook, lang="uz",
         print("   ⚠️  Video juda qisqa — Shorts yaratilmadi")
         return None
 
-    # ffmpeg filter: crop markaz, scale, matn overlay
-    sarlavha_esc = sarlavha.replace("'", "\\'").replace(":", "\\:")[:60]
-    hook_esc     = (hook or "").replace("'", "\\'").replace(":", "\\:")[:40].upper()
-
-    # Font yo'li
+    # Font yo'li (Windows)
     font_bold = "C\\:/Windows/Fonts/arialbd.ttf"
-    font_reg  = "C\\:/Windows/Fonts/arial.ttf"
+    # DejaVu Serif kiriллni qo'llab-quvvatlaydi (mavjud bo'lsa)
+    for _fb in [
+        "C:\\Windows\\Fonts\\DejaVuSans-Bold.ttf",
+        "C:\\Windows\\Fonts\\seguibl.ttf",   # Segoe UI Black — kirill
+        "C:\\Windows\\Fonts\\arialbd.ttf",
+    ]:
+        if os.path.exists(_fb):
+            font_bold = _fb.replace("\\", "\\\\").replace(":", "\\:")
+            break
+
+    # Kirill matnni textfile orqali uzatish (subprocess argument sifatida xavfsiz)
+    tmp_hook_file     = os.path.join(TEMP_DIR, "shorts_hook.txt")
+    tmp_sarlavha_file = os.path.join(TEMP_DIR, "shorts_title.txt")
+    os.makedirs(TEMP_DIR, exist_ok=True)
+
+    hook_text     = (hook or "").strip()[:40].upper()
+    sarlavha_text = (sarlavha or "").strip()[:60]
+    brand_txt     = {"uz": "1KUN GLOBAL", "ru": "1DEN GLOBAL", "en": "1DAY GLOBAL"}.get(lang, "1KUN")
+
+    # Matnlarni faylga yozish (UTF-8, kirill xavfsiz)
+    with open(tmp_hook_file,     "w", encoding="utf-8") as f: f.write(hook_text)
+    with open(tmp_sarlavha_file, "w", encoding="utf-8") as f: f.write(sarlavha_text)
+
+    # Fayl yo'llarini ffmpeg uchun ekranlash
+    def _esc_path(p):
+        return p.replace("\\", "/").replace(":", "\\:")
+
+    hook_tf     = _esc_path(tmp_hook_file)
+    sarlavha_tf = _esc_path(tmp_sarlavha_file)
 
     # Filter chain
-    # 1. Crop: 9:16 markazdan (input 16:9 bo'lsa: crop=ih*9/16:ih)
-    # 2. Scale: 1080x1920
-    # 3. Hook matni (yuqorida, sariq)
-    # 4. Sarlavha (pastda, oq)
-    # 5. 1KUN badge (yuqori chap)
-
     vf_parts = [
         "crop=ih*9/16:ih",
         f"scale={SW}:{SH}",
-        # Quyidan qorong'i gradient (drawbox orqali yaqinlashtiriladi)
-        f"drawbox=x=0:y={SH-350}:w={SW}:h=350:color=black@0.65:t=fill",
-        # Yuqori shadow
-        f"drawbox=x=0:y=0:w={SW}:h=200:color=black@0.5:t=fill",
-        # Chap aksent chiziq
+        # Pastki qorong'i qatlam
+        f"drawbox=x=0:y={SH-380}:w={SW}:h=380:color=black@0.70:t=fill",
+        # Yuqori soya
+        f"drawbox=x=0:y=0:w={SW}:h=200:color=black@0.55:t=fill",
+        # Chap qizil aksent chiziq
         f"drawbox=x=0:y=0:w=8:h={SH}:color=0xff2200@0.9:t=fill",
         # Pastki oltin chiziq
         f"drawbox=x=0:y={SH-8}:w={SW}:h=8:color=0xf0a500:t=fill",
+        # 1KUN badge (yuqori chap) — ASCII xavfsiz
+        f"drawtext=fontfile={font_bold}:text='{brand_txt}':"
+        f"fontsize=42:fontcolor=0xF0A500:x=30:y=40:"
+        f"shadowcolor=black:shadowx=2:shadowy=2",
     ]
 
-    # Hook matni
-    if hook_esc:
+    # Hook matni — textfile (kirill xavfsiz)
+    if hook_text:
         vf_parts.append(
-            f"drawtext=fontfile={font_bold}:text='{hook_esc}':"
-            f"fontsize=60:fontcolor=0xFFD200:x=(w-text_w)/2:y={SH-300}:"
+            f"drawtext=fontfile={font_bold}:textfile={hook_tf}:"
+            f"fontsize=60:fontcolor=0xFFD200:x=(w-text_w)/2:y={SH-330}:"
             f"shadowcolor=black:shadowx=3:shadowy=3"
         )
 
-    # Sarlavha (2 qatorga bo'lish — ffmpeg wrap_width)
-    if sarlavha_esc:
+    # Sarlavha — textfile (kirill xavfsiz)
+    if sarlavha_text:
         vf_parts.append(
-            f"drawtext=fontfile={font_bold}:text='{sarlavha_esc}':"
-            f"fontsize=52:fontcolor=white:x=(w-text_w)/2:y={SH-220}:"
+            f"drawtext=fontfile={font_bold}:textfile={sarlavha_tf}:"
+            f"fontsize=48:fontcolor=white:x=(w-text_w)/2:y={SH-240}:"
             f"shadowcolor=black:shadowx=3:shadowy=3:"
-            f"line_spacing=8"
+            f"line_spacing=10"
         )
-
-    # 1KUN badge
-    brand_txt = {"uz": "1KUN GLOBAL", "ru": "1DEN GLOBAL", "en": "1DAY GLOBAL"}.get(lang, "1KUN")
-    vf_parts.append(
-        f"drawtext=fontfile={font_bold}:text='{brand_txt}':"
-        f"fontsize=42:fontcolor=0xF0A500:x=30:y=40:"
-        f"shadowcolor=black:shadowx=2:shadowy=2"
-    )
 
     vf = ",".join(vf_parts)
 
     try:
-        subprocess.run([
+        r = subprocess.run([
             "ffmpeg", "-y",
             "-i", video_path,
             "-t", str(clip_dur),
@@ -2156,16 +2197,28 @@ def make_shorts_clip(video_path, sarlavha, hook, lang="uz",
             out_path
         ], capture_output=True, timeout=180)
 
+        if r.returncode != 0:
+            err = r.stderr.decode("utf-8", errors="replace")[-500:]
+            print(f"   ⚠️  ffmpeg shorts xato (rc={r.returncode}):\n{err}")
+
         if os.path.exists(out_path) and os.path.getsize(out_path) > 500_000:
             sz = os.path.getsize(out_path) / 1_048_576
             print(f"   📱 Shorts: {os.path.basename(out_path)} ({sz:.1f} MB)")
             return out_path
         else:
-            print("   ⚠️  Shorts fayl yaratilmadi")
+            print("   ⚠️  Shorts fayl yaratilmadi yoki juda kichik")
             return None
     except Exception as e:
         print(f"   ⚠️  Shorts xato: {e}")
         return None
+    finally:
+        # Temp matn fayllarni tozalash
+        for _tf in [tmp_hook_file, tmp_sarlavha_file]:
+            try:
+                if os.path.exists(_tf):
+                    os.remove(_tf)
+            except Exception:
+                pass
 
 
 # ── Pipeline ──────────────────────────────────────────────────

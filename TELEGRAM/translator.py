@@ -143,9 +143,10 @@ _UZ_PLACES = {
     "Сирия":               "Сурия",
     "Йемен":               "Яман",
     "Ливан":               "Ливан",
+    "Ливанон":             "Ливан",
     "Египет":              "Миср",
     "Турция":              "Туркия",
-    "Иордания":            "Иордания",
+    "Иордания":            "Урдун",
     "Ливия":               "Ливия",
     "Марокко":             "Марокаш",
     "Алжир":               "Жазоир",
@@ -157,11 +158,13 @@ _UZ_PLACES = {
     "Саудовской Аравии":   "Саудия Арабистонида",
     "ОАЭ":                 "БАА",
     # ── AI нотўғри ўзбекча шакллари → тўғри ўзбекча ─────────
-    # (AI баъзан рус ва ўзбекча аралаш нотўғри шакл яратади)
-    "Ирон":                "Эрон",      # AI: Ирон → тўғри: Эрон
-    "Пакистон":            "Покистон",  # AI: Пакистон → тўғри: Покистон (П-О не П-А)
-    "Сауди Арабистон":     "Саудия Арабистони",  # AI варианти
-    "Сауди Арабистони":    "Саудия Арабистони",  # AI варианти
+    "Ирон":                "Эрон",
+    "Пакистон":            "Покистон",
+    "Лубнон":              "Ливан",      # AI: Лубнон → тўғри: Ливан
+    "Либнон":              "Ливан",      # AI: Либнон → тўғри: Ливан
+    "Ғазза":               "Ғазо",       # AI: Ғазза → тўғри: Ғазо
+    "Сауди Арабистон":     "Саудия Арабистони",
+    "Сауди Арабистони":    "Саудия Арабистони",
     # ── Шаҳарлар ─────────────────────────────────────────────
     "Исламабад":           "Исломобод",
     "Токиё":               "Токио",
@@ -192,7 +195,29 @@ _UZ_PLACES = {
     "Газой":               "Ғазо",
     "Персидский залив":    "Форс кўрфази",
     "Персидского залива":  "Форс кўрфазининг",
+    "Западный берег":      "Ғарбий соҳил",
+    "Западного берега":    "Ғарбий соҳилнинг",
 }
+
+# ── Ўзбекча хабар терминлари (AI нотўғри ишлатади) ──────────
+_UZ_TERMS = {
+    "оташбас":        "оташкесим",    # ceasefire
+    "Оташбас":        "Оташкесим",
+    "оташбас":        "оташкесим",
+    "оташ бас":       "оташкесим",
+    "Газа":           "Ғазо",         # Gaza (лотин ёзувдан)
+    "Ливнон":         "Ливан",
+    "Исроил":         "Исроил",       # тўғри — ўзгартирмаслик
+}
+
+def _apply_uz_terms(text: str) -> str:
+    """Ўзбекча хабар терминларини тузатиш."""
+    if not text:
+        return text
+    for wrong, right in _UZ_TERMS.items():
+        if wrong in text:
+            text = re.sub(r'(?<!\w)' + re.escape(wrong) + r'(?!\w)', right, text)
+    return text
 
 # Сўз чегараси билан алмаштириш
 def _apply_uz_places(text: str) -> str:
@@ -427,17 +452,20 @@ RULES:
   Iran=Эрон (NOT Иран, NOT Ирон!), Iraq=Ироқ, Afghanistan=Афғонистон,
   Pakistan=Покистон (NOT Пакистан, NOT Пакистон!), India=Ҳиндистон,
   China=Хитой, Israel=Исроил (NOT Израил!), Palestine=Фаластин, Syria=Сурия, Yemen=Яман,
-  Lebanon=Ливия, Egypt=Миср, Turkey=Туркия,
+  Lebanon=Ливан, Egypt=Миср, Turkey=Туркия,
   Jordan=Урдун, Libya=Либия (Afrika, NOT Lebanon!),
   Morocco=Мароқаш, Algeria=Жазоир, Sudan=Судон, Ethiopia=Ҳабашистон,
   Saudi Arabia=Саудия Арабистони, UAE=БАА, Gaza=Ғазо,
   Islamabad=Исломобод, Tehran=Теҳрон, Damascus=Дамашқ, Baghdad=Бағдод,
   Kabul=Қобул, Delhi=Деҳли, Ankara=Анқара, Istanbul=Истанбул,
   Beirut=Байрут, Riyadh=Риёд, Doha=Доҳа, Tokyo=Токио (NOT Токиё)
+- UZBEK TERMS: ceasefire=оташкесим (NOT оташбас!), West Bank=Ғарбий соҳил,
+  airstrikes=авиазарба, sanctions=санкциялар, negotiations=музокаралар
 - UZBEK PLACE NAMES for script_uz (LATIN TTS):
   Israel=Isroil (NOT Izrail!), Lebanon=Liviya),
   Iran=Eron, Iraq=Iroq, Palestine=Falastin, Syria=Suriya, Gaza=Gʻazo,
-  Turkey=Turkiya, Egypt=Misr, Saudi Arabia=Saudiya Arabistoni
+  Lebanon=Livan (NOT Liviya! Liviya=Libya/Afrika), Turkey=Turkiya, Egypt=Misr,
+  Saudi Arabia=Saudiya Arabistoni, ceasefire=oʻt-kes (yoki oʻtkirim)
 - search_queries: REAL EVENT footage only, NO studio/anchor/presenter. Use EXACT names from the news.
 - keywords_en: 5 SPECIFIC proper nouns — person names, countries, organizations.
 - shot_list: 6 shots that tell the visual story. Each "search" must target FIELD footage — NO anchors, NO studio, NO panel, NO interview, NO analysis, NO presenter. Use specific locations, people, actions. Include year 2026."""
@@ -530,6 +558,15 @@ RULES:
             fixed = _apply_uz_places(val)
             if fixed != val:
                 log.debug(f"joy nomi tuzatildi ({field}): '{val[:40]}' → '{fixed[:40]}'")
+                data[field] = fixed
+
+    # ── UZ kirill maydonlarga atama tuzatish (оташбас→оташкесим va b.) ──
+    for field in _CYR_FIELDS + ("jumla1_uz", "jumla2_uz"):
+        val = data.get(field, "")
+        if val:
+            fixed = _apply_uz_terms(val)
+            if fixed != val:
+                log.debug(f"atama tuzatildi ({field}): '{val[:40]}' → '{fixed[:40]}'")
                 data[field] = fixed
 
     # ── script_uz — Lotin, TTS uchun; lotin joy nomlari tuzatish ─
