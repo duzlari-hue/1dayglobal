@@ -987,8 +987,9 @@ def make_daily_shorts(lang="uz"):
         yt_vid_id = upload_daily_to_youtube(out_path, news, lang)
         yt_url    = f"https://youtu.be/{yt_vid_id}" if yt_vid_id else ""
 
-        # ── Telegram + Facebook postlash (UZ va RU) ───────────
-        if lang in ("uz", "ru"):
+        # ── Telegram + Facebook postlash — vaqtincha o'chirilgan ──
+        # (Digest video allaqachon Telegram ga yuboradi — Shorts kerak emas)
+        if False and lang in ("uz", "ru"):
             try:
                 from social_poster import post_telegram_video, post_facebook_yt_link
                 # Birinchi yangilik sarlavhasi va jumla

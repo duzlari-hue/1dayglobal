@@ -308,10 +308,29 @@ def process_queue():
     """
     Yangiliklar digest formatida qayta ishlash.
 
-    Har DIGEST_BATCH ta yangilik → bitta digest video (3 tilda).
-    Format: ochilish + har yangilik (sarlavha+foto) + yakunlash
-    100% ORIGINAL — YouTube monetizatsiyaga mos.
+    Har DIGEST_BATCH ta yangilik → bitta digest video (faqat EN).
+    Bir chaqiruvda FAQAT 1 ta batch — takrorlanishni oldini oladi.
     """
+    # ── Lock fayl — paralel ishga tushishni oldini olish ────────
+    _lock = f"{QUEUE_DIR}/.lock"
+    if os.path.exists(_lock):
+        log.info("⏳ process_queue allaqachon ishlayapti — o'tkazildi")
+        return
+    try:
+        open(_lock, "w").close()   # Lock yaratish
+    except Exception:
+        pass
+
+    try:
+        _process_queue_inner()
+    finally:
+        try:
+            os.remove(_lock)       # Lock o'chirish (har doim)
+        except Exception:
+            pass
+
+
+def _process_queue_inner():
     from digest_maker import digest_pipeline
 
     seen = load_seen()
@@ -343,13 +362,15 @@ def process_queue():
         log.info("Yaroqli yangilik yo'q")
         return
 
-    # ── DIGEST_BATCH ta partiyalarga bo'lib digest yaratamiz ──
+    # ── FAQAT 1 ta batch — eng so'nggi DIGEST_BATCH ta yangilik ──
+    # (Keyingi chaqiruvda qolgan fayllar qayta ishlanadi)
     done_dir = f"{QUEUE_DIR}/done"
     os.makedirs(done_dir, exist_ok=True)
 
-    for batch_start in range(0, len(parsed), DIGEST_BATCH):
-        batch = parsed[batch_start: batch_start + DIGEST_BATCH]
-        log.info(f"\n📺 Digest batch: {batch_start+1}–{batch_start+len(batch)}/{len(parsed)}")
+    if True:   # Faqat 1 iteratsiya
+        batch_start = 0
+        batch = parsed[:DIGEST_BATCH]
+        log.info(f"\n📺 Digest batch: 1–{len(batch)}/{len(parsed)}")
 
         any_lang_ok = False
         # Social media uchun natijalarni to'playmiz

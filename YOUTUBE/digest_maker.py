@@ -1735,17 +1735,8 @@ def digest_pipeline(items: list, lang: str) -> str | None:
         # Telegram post havolasi: https://t.me/birkunday/1097
         tg_post_url = f"https://t.me/{tg_channel}/{tg_msg_id}" if (tg_channel and tg_msg_id) else ""
 
-        # Short → Telegram (agar yaratilgan bo'lsa)
-        if short_path and os.path.exists(short_path):
-            post_telegram_video(
-                video_path = short_path,
-                sarlavha   = sarlavha_tg,
-                jumla      = jumla_tg,
-                lang       = lang,
-                daraja     = daraja_tg,
-                yt_url     = yt_url,
-                location   = loc_tg,
-            )
+        # Short → Telegram — o'chirilgan (digest allaqachon yuborildi, 2-chi post kerak emas)
+        # if short_path and os.path.exists(short_path): ...
 
         # ── Facebook: UZ va RU Telegram bilan birga ─────────
         # EN Facebook'ga yuklanmaydi
