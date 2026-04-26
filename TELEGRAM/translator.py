@@ -389,8 +389,11 @@ def _ask_gemini(prompt, max_tokens=2500, retries=2) -> str:
 
 
 def _ask_openrouter(prompt, max_tokens=2500) -> str:
-    """OpenRouter — claude-3-5-haiku (yuqori sifat, ko'p til).
-    Faqat Gemini to'liq muvaffaqiyatsiz bo'lganda ishlatiladi."""
+    """OpenRouter — bepul modellar zanjiri:
+    1. google/gemini-2.0-flash-exp:free  (Gemini bilan bir xil sifat, BEPUL)
+    2. qwen/qwen3-235b-a22b:free         (ko'p tilni yaxshi biladi, BEPUL)
+    3. anthropic/claude-3-5-haiku        (to'lovli, faqat kredit bo'lsa)
+    """
     if not OPENROUTER_API_KEY:
         raise Exception("OPENROUTER_API_KEY yo'q")
     headers = {
@@ -399,33 +402,54 @@ def _ask_openrouter(prompt, max_tokens=2500) -> str:
         "HTTP-Referer":  "https://birkunday.com",
         "X-Title":       "1Kun Global News",
     }
-    body = {
-        "model":       "anthropic/claude-3-5-haiku",   # Gemini sifatiga yaqin
-        "messages":    [{"role": "user", "content": prompt}],
-        "temperature": 0.3,
-        "max_tokens":  max_tokens,
-    }
-    for attempt in range(3):
+    # Bepul modellar avval sinab ko'riladi
+    free_models = [
+        "google/gemini-2.0-flash-exp:free",   # Gemini Flash bilan bir xil!
+        "qwen/qwen3-235b-a22b:free",          # Qwen3 — ko'p til, yaxshi sifat
+        "meta-llama/llama-3.3-70b-instruct:free",  # Fallback
+    ]
+    paid_models = [
+        "anthropic/claude-3-5-haiku",          # Kredit kerak
+    ]
+    all_models = free_models + paid_models
+    errors = []
+    for model in all_models:
+        body = {
+            "model":       model,
+            "messages":    [{"role": "user", "content": prompt}],
+            "temperature": 0.3,
+            "max_tokens":  min(max_tokens, 3000),
+        }
         try:
             r = requests.post(
                 "https://openrouter.ai/api/v1/chat/completions",
                 headers=headers, json=body, timeout=90,
             )
             if r.status_code == 429:
-                time.sleep(20)
+                log.warning(f"OpenRouter {model} limit — 15s kutilmoqda...")
+                time.sleep(15)
+                # Keyingi modelga o'tamiz
+                errors.append(f"{model}: 429 limit")
                 continue
-            if r.status_code in (401, 402, 403):
-                raise Exception(f"OpenRouter {r.status_code}: {r.text[:100]}")
+            if r.status_code == 402:
+                # Kredit yo'q — bepul modelga o'tish
+                log.warning(f"OpenRouter {model}: kredit kerak — keyingi model...")
+                errors.append(f"{model}: 402 no credits")
+                continue
+            if r.status_code in (401, 403):
+                raise Exception(f"OpenRouter {r.status_code}: {r.text[:80]}")
             r.raise_for_status()
-            return r.json()["choices"][0]["message"]["content"].strip()
+            result = r.json()["choices"][0]["message"]["content"].strip()
+            log.info(f"  ✅ OpenRouter {model}")
+            return result
         except Exception as e:
-            if any(x in str(e) for x in ("401", "402", "403")):
+            err_str = str(e)
+            if any(x in err_str for x in ("401", "403")):
                 raise
-            if attempt < 2:
-                time.sleep(10)
-            else:
-                raise Exception(f"OpenRouter xato: {e}")
-    raise Exception("OpenRouter: barcha urinishlar muvaffaqiyatsiz")
+            log.warning(f"OpenRouter {model} xato: {err_str[:80]}")
+            errors.append(f"{model}: {err_str[:50]}")
+            time.sleep(3)
+    raise Exception("OpenRouter barcha modellar muvaffaqiyatsiz: " + " | ".join(errors))
 
 
 def groq_ask(prompt, max_tokens=2500, retries=2):
