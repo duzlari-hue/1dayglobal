@@ -96,55 +96,14 @@ def _ensure_cyr(text: str) -> str:
 
 
 def send_all_languages(d, article):
-    """3 tilda 3 kanalga yuborish"""
+    """Faqat INGLIZ kanalga yuborish (UZ/RU vaqtincha o'chirilgan)"""
     daraja = d.get("daraja", "xabar")
 
-    # O'ZBEK → @birkunday  (barcha UZ matnlar kiriллcha bo'lishi shart)
-    _j1_uz = _ensure_cyr(d.get("jumla1_uz", ""))
-    _j2_uz = _ensure_cyr(d.get("jumla2_uz", ""))
+    # ⏸️  O'ZBEK → @birkunday  — vaqtincha o'chirilgan
+    log.info("⏸️  UZ kanal o'chirilgan (vaqtincha)")
 
-    # jumla2 bo'sh bo'lsa — jumla1 ni jumlalarga bo'lib ikkinchi qism qilamiz
-    if not _j2_uz and _j1_uz:
-        _sents = re.split(r'(?<=[.!?…])\s+', _j1_uz.strip())
-        if len(_sents) >= 4:
-            mid = len(_sents) // 2
-            _j1_uz = " ".join(_sents[:mid]).strip()
-            _j2_uz = " ".join(_sents[mid:]).strip()
-
-    post_uz = make_post(
-        _ensure_cyr(d.get("sarlavha_uz", "")),
-        _j1_uz, _j2_uz,
-        daraja,
-        _ensure_cyr(d.get("hashtag_uz", "")),
-        _ensure_cyr(d.get("location_uz", "")),
-        "uz"
-    )
-    if send_telegram(post_uz, TELEGRAM_CHANNEL_UZ):
-        log.info(f"✅ Telegram UZ → {TELEGRAM_CHANNEL_UZ}")
-
-    # RUS → @birkunday_ru  (faqat kiriллcha matn yuboriladi)
-    _CYR_CHARS  = "абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ"
-    _ru_text    = d.get("sarlavha_ru", "") + d.get("jumla1_ru", "")
-    _ru_letters = [c for c in _ru_text if c.isalpha()]
-    _ru_cyr_pct = sum(1 for c in _ru_letters if c in _CYR_CHARS) / max(len(_ru_letters), 1)
-    if _ru_cyr_pct < 0.50:
-        log.warning(f"⚠️  RU matn kiriллcha emas ({_ru_cyr_pct:.0%}) — o'tkazildi")
-    else:
-        _j1_ru = d.get("jumla1_ru", "")
-        _j2_ru = d.get("jumla2_ru", "")
-        # jumla2_ru bo'sh bo'lsa — jumla1_ru ni bo'lamiz
-        if not _j2_ru and _j1_ru:
-            _sents_ru = re.split(r'(?<=[.!?…])\s+', _j1_ru.strip())
-            if len(_sents_ru) >= 4:
-                mid_ru = len(_sents_ru) // 2
-                _j1_ru = " ".join(_sents_ru[:mid_ru]).strip()
-                _j2_ru = " ".join(_sents_ru[mid_ru:]).strip()
-        post_ru = make_post(
-            d["sarlavha_ru"], _j1_ru, _j2_ru,
-            daraja, d["hashtag_ru"], d.get("location_ru", ""), "ru"
-        )
-        if send_telegram(post_ru, TELEGRAM_CHANNEL_RU):
-            log.info(f"✅ Telegram RU → {TELEGRAM_CHANNEL_RU}")
+    # ⏸️  RUS → @birkunday_ru  — vaqtincha o'chirilgan
+    log.info("⏸️  RU kanal o'chirilgan (vaqtincha)")
 
     # INGLIZ → @birkunday_en
     _j1_en = d.get("jumla1_en", "")

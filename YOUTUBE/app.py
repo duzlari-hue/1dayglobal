@@ -361,7 +361,7 @@ def process_queue():
         location_map  = {}   # lang → location
         daraja_main   = "xabar"
 
-        for lang in ["uz", "ru", "en"]:
+        for lang in ["en"]:  # ⏸️ UZ/RU vaqtincha o'chirilgan — faqat EN
             # Har bir yangilik uchun digest item yasaymiz
             items = []
             for raw in batch:
@@ -453,7 +453,7 @@ def run_daily_shorts_all():
     try:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         from daily_shorts import make_daily_shorts
-        for lg in ["uz", "ru", "en"]:
+        for lg in ["en"]:  # ⏸️ UZ/RU vaqtincha o'chirilgan — faqat EN
             try:
                 log.info(f"  → Daily Shorts ({lg.upper()}) yaratilmoqda...")
                 result = make_daily_shorts(lg)
@@ -545,7 +545,7 @@ def run_analysis_all():
             return ""   # Inglizcha matn — bo'sh qaytarish
         return text.strip()
 
-    for lang in ["uz", "ru", "en"]:
+    for lang in ["en"]:  # ⏸️ UZ/RU vaqtincha o'chirilgan — faqat EN
         items = []
         for raw in parsed:
             raw_sarlavha = raw["sarlavhalar"].get(lang, "")
