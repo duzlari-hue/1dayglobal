@@ -18,7 +18,7 @@ YOUTUBE_PLAYLIST = {
 TASHKENT = pytz.timezone("Asia/Tashkent")
 
 # Papkalar
-QUEUE_DIR  = os.getenv("QUEUE_DIR",  "../TELEGRAM/output/youtube_queue")
+QUEUE_DIR  = os.getenv("QUEUE_DIR",  "queue")
 OUTPUT_DIR = os.getenv("OUTPUT_DIR", "output/videos")
 TEMP_DIR   = os.getenv("TEMP_DIR",   "output/temp")
 
