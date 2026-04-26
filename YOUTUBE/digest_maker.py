@@ -1482,6 +1482,76 @@ def _cleanup(ts: str, paths: list):
 
 
 # ─────────────────────────────────────────────────────────────
+# MULTI-VOICE AUDIO MIX  (har yangilik o'z vaqtida gapiradi)
+# ─────────────────────────────────────────────────────────────
+def _mix_multi_voice(video_path: str,
+                     voices: list,       # [(voice_mp3_path, start_sec), ...]
+                     out_path: str,
+                     lang: str) -> bool:
+    """
+    Har yangilik ovozi o'z vaqtida (adelay) eshitiladi.
+    Fon musiqasi butun video davomida past ovozda yangradi.
+    """
+    fx         = AUDIO_FX.get(lang, AUDIO_FX.get("uz", "volume=1.0"))
+    music_path = _get_music()
+    vid_dur    = _audio_dur(video_path)
+    if vid_dur < 1:
+        return False
+
+    valid = [(vp, vs) for vp, vs in voices if vp and os.path.exists(vp)]
+    if not valid:
+        return False
+
+    cmd = ["ffmpeg", "-y", "-i", video_path]
+    for vp, _ in valid:
+        cmd += ["-i", vp]
+
+    has_music = bool(music_path and os.path.exists(music_path))
+    music_idx = len(valid) + 1
+    if has_music:
+        cmd += ["-stream_loop", "-1", "-i", music_path]
+
+    fc   = []
+    vlabels = []
+    for i, (vp, start_t) in enumerate(valid):
+        delay_ms = max(0, int(start_t * 1000))
+        lbl = f"v{i}"
+        fc.append(f"[{i+1}:a]{fx},adelay={delay_ms}|{delay_ms}[{lbl}]")
+        vlabels.append(f"[{lbl}]")
+
+    # Barcha ovozlarni birlashtirish
+    fc.append(
+        f"{''.join(vlabels)}amix=inputs={len(vlabels)}:"
+        f"normalize=0:duration=longest[allv]"
+    )
+
+    if has_music:
+        fc.append(
+            f"[{music_idx}:a]aresample=44100,"
+            f"atrim=duration={vid_dur:.3f},"
+            f"volume={MUSIC_VOL:.3f}[mus]"
+        )
+        fc.append("[allv][mus]amix=inputs=2:duration=first[aout]")
+        map_a = "[aout]"
+    else:
+        map_a = "[allv]"
+
+    cmd += [
+        "-filter_complex", ";".join(fc),
+        "-map", "0:v", "-map", map_a,
+        "-c:v", "copy",
+        "-c:a", "aac", "-b:a", "160k",
+        "-t", f"{vid_dur:.3f}",
+        "-movflags", "+faststart",
+        out_path,
+    ]
+    r = subprocess.run(cmd, capture_output=True, timeout=600)
+    if r.returncode != 0:
+        print("  Multi-voice xato:", r.stderr.decode("utf-8", errors="replace")[-300:])
+    return r.returncode == 0 and os.path.exists(out_path)
+
+
+# ─────────────────────────────────────────────────────────────
 # ASOSIY FUNKSIYA
 # ─────────────────────────────────────────────────────────────
 def digest_pipeline(items: list, lang: str) -> str | None:
@@ -1512,10 +1582,14 @@ def digest_pipeline(items: list, lang: str) -> str | None:
     os.makedirs(TEMP_DIR,   exist_ok=True)
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-    all_temps = []
-    segments  = []
-    durations = []
+    all_temps   = []
+    segments    = []
+    durations   = []
     seen_pexels = set()
+
+    # Per-item ovoz va boshlanish vaqtlari
+    voice_info  = []   # [(voice_mp3_path, start_sec_in_final_video), ...]
+    current_t   = 0.0  # Joriy vaqt (xfade hisobga olingan)
 
     # ── 1. OCHILISH ───────────────────────────────────────────
     open_img = os.path.join(TEMP_DIR, f"dg_open_{ts}.jpg")
@@ -1525,6 +1599,7 @@ def digest_pipeline(items: list, lang: str) -> str | None:
         segments.append(open_vid)
         durations.append(OPEN_DUR)
         all_temps += [open_img, open_vid]
+        current_t = OPEN_DUR - TRANS_DUR   # Birinchi item shu vaqtdan boshlanadi
     print(f"  ✓ Ochilish kartasi")
 
     # ── 2. HAR BIR YANGILIK ───────────────────────────────────
@@ -1543,14 +1618,26 @@ def digest_pipeline(items: list, lang: str) -> str | None:
 
         print(f"  ─ Yangilik {story_num}/{n}: {sarlavha[:55]}")
 
-        # -- 2a. Sarlavha kartasi
-        title_img = os.path.join(TEMP_DIR, f"dg_ttl_{ts}_{idx:02d}.jpg")
-        title_vid = os.path.join(TEMP_DIR, f"dg_ttl_{ts}_{idx:02d}.mp4")
-        _make_story_title_card(sarlavha, location, daraja, story_num, n, lang, title_img)
-        if _still_to_video(title_img, TITLE_DUR, title_vid):
-            segments.append(title_vid)
-            durations.append(TITLE_DUR)
-            all_temps += [title_img, title_vid]
+        # -- 2a. Per-item TTS: sarlavha + jumla1
+        tts_parts = []
+        if sarlavha:
+            tts_parts.append(sarlavha.strip())
+        if jumla1 and jumla1.strip() != sarlavha.strip():
+            body_words = jumla1.split()[:80]   # Max ~80 so'z (~40s speech)
+            tts_parts.append(" ".join(body_words))
+        tts_text = ". ".join(tts_parts) if tts_parts else (sarlavha or "")
+
+        voice_i   = os.path.join(TEMP_DIR, f"dg_voice_{ts}_{idx:02d}.mp3")
+        all_temps.append(voice_i)
+        tts_ok    = _make_tts(tts_text, lang, daraja, voice_i) if tts_text else False
+        tts_dur   = _audio_dur(voice_i) if tts_ok and os.path.exists(voice_i) else 0.0
+
+        # Segment davomiyligi = TTS + 2s buffer (min 8s)
+        seg_dur   = max(tts_dur + 2.0, 8.0) if tts_dur > 0 else 12.0
+
+        # Bu item ovozi shu vaqtdan boshlanadi
+        voice_info.append((voice_i if tts_ok else None, current_t))
+        current_t += seg_dur - TRANS_DUR   # Keyingi item xfade bilan boshlanganda
 
         # -- 2b. Rasm yuklash
         photo_path = None
@@ -1592,20 +1679,20 @@ def digest_pipeline(items: list, lang: str) -> str | None:
                 sarlavha, location, daraja,
                 stats, lang, next_title, story_num, n, ovl_png
             )
-            if bg_ok and _photo_to_video_composite(raw_bg, ovl_png, PHOTO_DUR, idx, seg_vid):
+            if bg_ok and _photo_to_video_composite(raw_bg, ovl_png, seg_dur, idx, seg_vid):
                 segments.append(seg_vid)
-                durations.append(PHOTO_DUR)
-                print(f"     ✓ Segment statik + overlay")
+                durations.append(seg_dur)
+                print(f"     ✓ Segment {seg_dur:.1f}s + overlay")
                 continue
 
         # Fallback: sarlavha karta (matn baked-in, statik)
         fb_img = os.path.join(TEMP_DIR, f"dg_fb_{ts}_{idx:02d}.jpg")
         all_temps.append(fb_img)
         _make_story_title_card(sarlavha, location, daraja, story_num, n, lang, fb_img)
-        if _still_to_video(fb_img, PHOTO_DUR, seg_vid):
+        if _still_to_video(fb_img, seg_dur, seg_vid):
             segments.append(seg_vid)
-            durations.append(PHOTO_DUR)
-            print(f"     ✓ Segment (karta fallback)")
+            durations.append(seg_dur)
+            print(f"     ✓ Segment {seg_dur:.1f}s (karta fallback)")
 
     # ── 3. YAKUNLASH ──────────────────────────────────────────
     outro_img = os.path.join(TEMP_DIR, f"dg_outro_{ts}.jpg")
@@ -1621,38 +1708,7 @@ def digest_pipeline(items: list, lang: str) -> str | None:
         print("  ⚠️  Hech bir segment yaratilmadi")
         return None
 
-    # ── 4. TTS NARATSIYA ──────────────────────────────────────
-    # Har bir yangilik uchun qisqa naratsiya (WORDS_PER_STORY so'z)
-    narration_parts = []
-    for item in items:
-        # scripts (dict) → to'g'ri til, yo'q bo'lsa jumla, so'ngra sarlavha
-        script = (_iget(item, "scripts", lang) or
-                  _iget(item, "jumla",   lang) or
-                  _iget(item, "sarlavha", lang))
-        words  = script.split()[:WORDS_PER_STORY]
-        narration_parts.append(" ".join(words) if words else "")
-
-    # Tilga qarab ajratuvchi
-    sep = {
-        "uz": ". Keyingi yangilik. ",
-        "ru": ". Следующая новость. ",
-        "en": ". Next story. ",
-    }.get(lang, ". ")
-
-    full_text = sep.join(p for p in narration_parts if p)
-    if not full_text.strip():
-        full_text = " ".join(_iget(item, "sarlavha", lang) for item in items)
-
-    daraja_main = items[0].get("daraja", "xabar")
-    voice_raw   = os.path.join(TEMP_DIR, f"dg_voice_{ts}.mp3")
-    all_temps.append(voice_raw)
-
-    if not _make_tts(full_text, lang, daraja_main, voice_raw):
-        print("  ⚠️  TTS muvaffaqiyatsiz — ovoz yo'q")
-        # Ovoz yo'q holda ham video yaratamiz
-        voice_raw = None
-
-    # ── 5. CONCAT ─────────────────────────────────────────────
+    # ── 4. CONCAT ─────────────────────────────────────────────
     concat_vid = os.path.join(TEMP_DIR, f"dg_concat_{ts}.mp4")
     all_temps.append(concat_vid)
     if not _concat_xfade(segments, durations, concat_vid):
@@ -1661,18 +1717,16 @@ def digest_pipeline(items: list, lang: str) -> str | None:
         return None
     print(f"  ✓ Concat: {len(segments)} segment")
 
-    # ── 6. AUDIO MIX ──────────────────────────────────────────
+    # ── 5. MULTI-VOICE AUDIO MIX ──────────────────────────────
+    # Har yangilik ovozi o'z rasmi ko'rsatilayotganda eshitiladi (adelay)
     out_name = f"{ts}_digest_{lang}.mp4"
     out_path = os.path.join(OUTPUT_DIR, out_name)
 
-    if voice_raw and os.path.exists(voice_raw):
-        ok = _mix_audio(concat_vid, voice_raw, out_path, lang)
-    else:
-        ok = False
+    ok = _mix_multi_voice(concat_vid, voice_info, out_path, lang)
 
     if not ok:
         shutil.copy(concat_vid, out_path)
-        print("  ℹ️  Audio mix yo'q — faqat video")
+        print("  ℹ️  Multi-voice mix xato — faqat video")
 
     # ── 7. TOZALASH ───────────────────────────────────────────
     _cleanup(ts, all_temps)
