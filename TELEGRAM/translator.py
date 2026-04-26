@@ -418,7 +418,8 @@ def _ask_openrouter(prompt, max_tokens=2500) -> str:
     errors = []
     for model in all_models:
         # claude-haiku uchun max_tokens ni kamaytirish (402 oldini olish)
-        _mt = 1800 if "claude" in model else min(max_tokens, 2000)
+        # min() ishlatish: title retry (80) → 80, asosiy (700) → 700
+        _mt = min(max_tokens, 800) if "claude" in model else min(max_tokens, 2000)
         body = {
             "model":       model,
             "messages":    [{"role": "user", "content": prompt}],
@@ -605,37 +606,82 @@ RULES:
 - keywords_en: 5 SPECIFIC proper nouns — person names, countries, organizations.
 - shot_list: 6 shots that tell the visual story. Each "search" must target FIELD footage — NO anchors, NO studio, NO panel, NO interview, NO analysis, NO presenter. Use specific locations, people, actions. Include year 2026."""
 
+    # ── Qisqa prompt (OpenRouter fallback uchun — skriptsiz, ~600 token) ──
+    short_prompt = f"""Translate this news to Uzbek Cyrillic, Russian, English. Return ONLY valid JSON (no markdown, no extra text).
+{_geo_warning}
+Title: {title}
+Details: {description}
+
+{{
+  "sarlavha_uz": "5-7 so'z FAQAT O'ZBEK KIRIЛЛIDA — inglizcha yozma! Misol: 'Yamanда минали инqiroz davom etmoqda'",
+  "jumla1_uz": "FAQAT O'ZBEK KIRIЛЛIDA — 3-4 ta jumla. Nima bo'ldi, qayerda, kim, nima uchun — barchasi kiriллda",
+  "jumla2_uz": "FAQAT O'ZBEK KIRIЛЛIDA — 2-3 ta jumla. Natijalar, kontekst, tafsilotlar",
+  "sarlavha_ru": "5-7 слов ТОЛЬКО НА РУССКОМ — не по-английски! Пример: 'Минный кризис в Йемене продолжается'",
+  "jumla1_ru": "ТОЛЬКО РУССКИЙ — 3-4 предложения. Что произошло, где, кто, почему",
+  "jumla2_ru": "ТОЛЬКО РУССКИЙ — 2-3 предложения. Последствия, контекст",
+  "sarlavha_en": "5-7 words in English. Example: 'Yemen landmine crisis persists despite truce'",
+  "jumla1_en": "3-4 sentences in English. What happened, where, who, why",
+  "jumla2_en": "2-3 sentences. Consequences and context",
+  "daraja": "muhim OR tezkor OR xabar",
+  "hashtag_uz": "#3-4 та хэштег O'ЗБЕК КИРИЛЛИДА. Мисол: '#Яман #Дунё #1КУН'",
+  "hashtag_ru": "#3-4 хэштега по-РУССКИ. Пример: '#Йемен #Мир #1День'",
+  "hashtag_en": "#3-4 hashtags. Example: '#Yemen #World #1Day'",
+  "location_uz": "Joy nomi kiriллda (shahar yoki davlat)",
+  "location_ru": "Место по-русски",
+  "location_en": "Location in English",
+  "keywords_en": ["Person", "Country", "Organization", "Topic", "Term"]
+}}
+CRITICAL: sarlavha_uz, jumla1_uz, jumla2_uz — FAQAT O'ZBEK KIRILLI (а,б,в,г,д...). Inglizcha YOZMA!
+CRITICAL: sarlavha_ru, jumla1_ru, jumla2_ru — FAQAT RUSCHA (а,б,в,г,д...). Inglizcha YOZMA!"""
+
+    # ── 1. Gemini — to'liq prompt (skript, shot_list bilan) ─────────────
+    data = None
     try:
-        data = parse_json(groq_ask(prompt, max_tokens=3000))
-    except Exception as e:
-        log.warning(f"Tarjima xato (barcha servislar): {e}")
-        # Fallback: UZ/RU bo'sh (placeholder emas!), EN — orijinal matn
-        _en_script = (description or title or "").strip()
-        _en_j1     = _en_script[:600] if _en_script else title
-        data = {
-            "sarlavha_uz":  "",           # Bo'sh — inglizcha gibberish bo'lmasin
-            "jumla1_uz":    "",
-            "jumla2_uz":    "",
-            "sarlavha_ru":  "",           # Bo'sh — inglizcha chiqmasin
-            "jumla1_ru":    "",           # Placeholder EMAS — bo'sh, RU kanal o'tkaziladi
-            "jumla2_ru":    "",
-            "sarlavha_en":  title[:80],
-            "jumla1_en":    _en_j1,
-            "jumla2_en":    "",
-            "script_uz":    "",
-            "script_ru":    "",
-            "script_en":    _en_script,   # To'liq inglizcha matn (title emas!)
-            "daraja":       "xabar",
-            "hashtag_uz":   "#Янгилик #Дунё #1КУН",
-            "hashtag_ru":   "#Новости #Мир #1День",
-            "hashtag_en":   "#News #World #1Day",
-            "keywords_en":  title.split()[:5],
-            "keywords_ru":  [],
-            "search_queries": [title[:50]],
-            "location_uz":  "",
-            "location_ru":  "",
-            "location_en":  "",
-        }
+        data = parse_json(_ask_gemini(prompt, max_tokens=3000, retries=2))
+    except Exception as e_gem:
+        log.warning(f"Gemini muvaffaqiyatsiz → OpenRouter qisqa so'rov: {e_gem}")
+
+    # ── 2. OpenRouter — qisqa prompt (skriptsiz, max 700 token) ─────────
+    if data is None:
+        try:
+            raw_or = _ask_openrouter(short_prompt, max_tokens=700)
+            data = parse_json(raw_or)
+            # Skript maydonlari bo'sh — Gemini ishlamadi
+            for _sf in ("script_uz", "script_ru", "script_en",
+                        "hook_uz", "hook_ru", "hook_en"):
+                data.setdefault(_sf, "")
+            data.setdefault("shot_list", [])
+            data.setdefault("search_queries", [])
+            log.info("✅ OpenRouter qisqa so'rov muvaffaqiyatli")
+        except Exception as e_or:
+            log.warning(f"Tarjima xato (barcha servislar): Gemini: {e_gem} | OpenRouter: {e_or}")
+            # Fallback: UZ/RU bo'sh (placeholder emas!), EN — orijinal matn
+            _en_script = (description or title or "").strip()
+            _en_j1     = _en_script[:600] if _en_script else title
+            data = {
+                "sarlavha_uz":  "",
+                "jumla1_uz":    "",
+                "jumla2_uz":    "",
+                "sarlavha_ru":  "",
+                "jumla1_ru":    "",
+                "jumla2_ru":    "",
+                "sarlavha_en":  title[:80],
+                "jumla1_en":    _en_j1,
+                "jumla2_en":    "",
+                "script_uz":    "",
+                "script_ru":    "",
+                "script_en":    _en_script,
+                "daraja":       "xabar",
+                "hashtag_uz":   "#Янгилик #Дунё #1КУН",
+                "hashtag_ru":   "#Новости #Мир #1День",
+                "hashtag_en":   "#News #World #1Day",
+                "keywords_en":  title.split()[:5],
+                "keywords_ru":  [],
+                "search_queries": [title[:50]],
+                "location_uz":  "",
+                "location_ru":  "",
+                "location_en":  "",
+            }
 
     # ── AI placeholder larni tozalash: {musiqa}, {sarlavha}, {yangilik} ──
     # AI ba'zan JSON da to'ldirilmagan o'zgaruvchi qoldiradi — barchani o'chirish
