@@ -390,9 +390,11 @@ def _ask_gemini(prompt, max_tokens=2500, retries=2) -> str:
 
 def _ask_openrouter(prompt, max_tokens=2500) -> str:
     """OpenRouter — bepul modellar zanjiri:
-    1. google/gemini-2.0-flash-exp:free  (Gemini bilan bir xil sifat, BEPUL)
-    2. qwen/qwen3-235b-a22b:free         (ko'p tilni yaxshi biladi, BEPUL)
-    3. anthropic/claude-3-5-haiku        (to'lovli, faqat kredit bo'lsa)
+    1. meta-llama/llama-3.3-70b-instruct:free  (tasdiqlangan — mavjud!)
+    2. deepseek/deepseek-r1:free               (DeepSeek R1 — kuchli bepul)
+    3. deepseek/deepseek-chat-v3-0324:free     (DeepSeek V3)
+    4. mistralai/mistral-7b-instruct:free      (klassik bepul)
+    5. anthropic/claude-3-5-haiku              (to'lovli, so'nggi chora)
     """
     if not OPENROUTER_API_KEY:
         raise Exception("OPENROUTER_API_KEY yo'q")
@@ -402,23 +404,26 @@ def _ask_openrouter(prompt, max_tokens=2500) -> str:
         "HTTP-Referer":  "https://birkunday.com",
         "X-Title":       "1Kun Global News",
     }
-    # Bepul modellar avval sinab ko'riladi
+    # Bepul modellar avval sinab ko'riladi (404 xato bo'lsa — keyingiga o'tamiz)
     free_models = [
-        "google/gemini-2.0-flash-exp:free",   # Gemini Flash bilan bir xil!
-        "qwen/qwen3-235b-a22b:free",          # Qwen3 — ko'p til, yaxshi sifat
-        "meta-llama/llama-3.3-70b-instruct:free",  # Fallback
+        "meta-llama/llama-3.3-70b-instruct:free",  # Tasdiqlangan! (429 = mavjud)
+        "deepseek/deepseek-r1:free",               # DeepSeek R1 — kuchli, bepul
+        "deepseek/deepseek-chat-v3-0324:free",     # DeepSeek V3
+        "mistralai/mistral-7b-instruct:free",      # Klassik bepul model
     ]
     paid_models = [
-        "anthropic/claude-3-5-haiku",          # Kredit kerak
+        "anthropic/claude-3-5-haiku",              # Kredit kerak (so'nggi chora)
     ]
     all_models = free_models + paid_models
     errors = []
     for model in all_models:
+        # claude-haiku uchun max_tokens ni kamaytirish (402 oldini olish)
+        _mt = 1800 if "claude" in model else min(max_tokens, 2000)
         body = {
             "model":       model,
             "messages":    [{"role": "user", "content": prompt}],
             "temperature": 0.3,
-            "max_tokens":  min(max_tokens, 3000),
+            "max_tokens":  _mt,
         }
         try:
             r = requests.post(
@@ -426,15 +431,19 @@ def _ask_openrouter(prompt, max_tokens=2500) -> str:
                 headers=headers, json=body, timeout=90,
             )
             if r.status_code == 429:
-                log.warning(f"OpenRouter {model} limit — 15s kutilmoqda...")
-                time.sleep(15)
-                # Keyingi modelga o'tamiz
+                log.warning(f"OpenRouter {model} limit — 30s kutilmoqda...")
+                time.sleep(30)  # 30s: rate limit o'tishi uchun
                 errors.append(f"{model}: 429 limit")
                 continue
             if r.status_code == 402:
-                # Kredit yo'q — bepul modelga o'tish
+                # Kredit yo'q — keyingi modelga
                 log.warning(f"OpenRouter {model}: kredit kerak — keyingi model...")
                 errors.append(f"{model}: 402 no credits")
+                continue
+            if r.status_code == 404:
+                # Model mavjud emas — keyingi modelga
+                log.warning(f"OpenRouter {model}: topilmadi (404) — keyingi model...")
+                errors.append(f"{model}: 404 not found")
                 continue
             if r.status_code in (401, 403):
                 raise Exception(f"OpenRouter {r.status_code}: {r.text[:80]}")
