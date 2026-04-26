@@ -14,7 +14,7 @@ except Exception:
     pass
 
 GEMINI_API_KEY     = os.getenv("GEMINI_API_KEY", "")
-OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")  # fallback
+OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")  # openrouter.ai (fallback)
 
 log = logging.getLogger(__name__)
 
@@ -83,17 +83,21 @@ def lat2cyr(text: str) -> str:
 
 
 def _fix_case(text: str) -> str:
-    """Агар сарлавҳа CAPS бўлса — Sentence Case га ўтказиш."""
+    """CAPS → Sentence case, kichikdan boshlangan → birinchi harf katta."""
     if not text:
         return text
     letters = [c for c in text if c.isalpha()]
     if not letters:
         return text
     upper_n = sum(1 for c in letters if c.isupper())
-    # 50%дан кўп катта ҳарф бўлса — тузат
+    # 50%dan ko'p katta harf bo'lsa — hammasi kichik, birinchisi katta
     if upper_n / len(letters) > 0.5:
         lowered = text.lower()
         return lowered[0].upper() + lowered[1:] if lowered else lowered
+    # Birinchi harf kichik bo'lsa — katta qilish (all-lowercase modeldan)
+    t = text.strip()
+    if t and t[0].islower():
+        return t[0].upper() + t[1:]
     return text
 
 
@@ -201,13 +205,38 @@ _UZ_PLACES = {
 
 # ── Ўзбекча хабар терминлари (AI нотўғри ишлатади) ──────────
 _UZ_TERMS = {
-    "оташбас":        "оташкесим",    # ceasefire
-    "Оташбас":        "Оташкесим",
-    "оташбас":        "оташкесим",
-    "оташ бас":       "оташкесим",
-    "Газа":           "Ғазо",         # Gaza (лотин ёзувдан)
-    "Ливнон":         "Ливан",
-    "Исроил":         "Исроил",       # тўғри — ўзгартирмаслик
+    # Оташкесим / ўт очишни тўхтатиш
+    "оташбас":              "ўт очишни тўхтатиш",
+    "Оташбас":              "Ўт очишни тўхтатиш",
+    "оташ бас":             "ўт очишни тўхтатиш",
+    "оташкесим":            "ўт очишни тўхтатиш",
+    "Оташкесим":            "Ўт очишни тўхтатиш",
+    # Яҳудий (еврей — рус сўзи)
+    "еврей":                "яҳудий",
+    "Еврей":                "Яҳудий",
+    "евреи":                "яҳудийлар",
+    "Евреи":                "Яҳудийлар",
+    "еврейлар":             "яҳудийлар",
+    "Еврейлар":             "Яҳудийлар",
+    "еврейча":              "яҳудийча",
+    "Израил":               "Исроил",        # Израиль → Исроил
+    "Израиль":              "Исроил",
+    "Газа":                 "Ғазо",
+    "Ливнон":               "Ливан",
+    # БМТ (AI нотўғри форма ишлатади)
+    " бмн ":                " БМТ ",
+    " БМН ":                " БМТ ",
+    "бмн ":                 "БМТ ",
+    "БМН ":                 "БМТ ",
+    " бмн.":                " БМТ.",
+    " бмт ":                " БМТ ",
+    "бмт ":                 "БМТ ",
+    " оон ":                " БМТ ",
+    " ООН ":                " БМТ ",
+    "оон ":                 "БМТ ",
+    "ООН ":                 "БМТ ",
+    " оон.":                " БМТ.",
+    # НАТО → НАТО (to'g'ri, o'zgartirmaymiz)
 }
 
 def _apply_uz_terms(text: str) -> str:
@@ -275,8 +304,25 @@ def _fix_title_only(original_en: str, lang: str) -> str:
         "en": "English. 5-8 words, sentence case. Only first word and proper nouns capitalized.",
     }
     instruction = lang_map.get(lang, lang_map["en"])
+
+    # Lebanon vs Libya farqlash
+    _en_lower = (original_en or "").lower()
+    _is_lbn = any(k in _en_lower for k in
+                  ("lebanon", "liban", "beirut", "lebanese", "hezbollah", "nasrallah"))
+    _is_lby = any(k in _en_lower for k in
+                  ("libya", "libyan", "tripoli", "benghazi", "haftar"))
+    if _is_lbn and not _is_lby:
+        _geo = ("\nCRITICAL: This is about LEBANON (Ливан/Livan, Middle East). "
+                "NEVER use 'Ливия' or 'Liviya' (that is Libya/Africa).\n")
+    elif _is_lby and not _is_lbn:
+        _geo = ("\nCRITICAL: This is about LIBYA (Ливия/Liviya, North Africa). "
+                "NEVER use 'Ливан' or 'Livan' (that is Lebanon/Middle East).\n")
+    else:
+        _geo = ""
+
     prompt = (
         f"Translate this news headline to {instruction}\n"
+        f"{_geo}"
         f"Headline: {original_en}\n\n"
         f"Return ONLY the translated headline text, nothing else."
     )
@@ -301,54 +347,52 @@ _GEMINI_MODEL = "gemini-2.0-flash"
 _GEMINI_URL   = f"https://generativelanguage.googleapis.com/v1beta/models/{_GEMINI_MODEL}:generateContent"
 
 
-def groq_ask(prompt, max_tokens=2500, retries=4):
-    """Gemini 2.0 Flash API; xato bo'lsa OpenRouter fallback."""
-    # ── 1. Gemini 2.0 Flash ──────────────────────────────────
-    if GEMINI_API_KEY:
-        body = {
-            "contents": [{"parts": [{"text": prompt}]}],
-            "generationConfig": {
-                "temperature":     0.3,
-                "maxOutputTokens": max_tokens,
-            },
-        }
-        for attempt in range(retries):
-            try:
-                r = requests.post(
-                    _GEMINI_URL,
-                    params={"key": GEMINI_API_KEY},
-                    headers={"Content-Type": "application/json"},
-                    json=body,
-                    timeout=60,
-                )
-                if r.status_code == 429:
-                    wait = 15 * (attempt + 1)   # 15s, 30s, 45s, 60s
-                    log.warning(f"Gemini limit — {wait}s kutilmoqda...")
-                    time.sleep(wait)
-                    continue
-                if r.status_code == 401:
-                    log.warning("Gemini API key yaroqsiz — OpenRouter ga o'tilmoqda")
-                    break
-                if r.status_code == 400:
-                    log.warning(f"Gemini 400: {r.text[:200]}")
-                    raise Exception(f"Gemini 400 xato: {r.text[:100]}")
-                r.raise_for_status()
-                data = r.json()
-                return data["candidates"][0]["content"]["parts"][0]["text"].strip()
-            except Exception as e:
-                if "400 xato" in str(e):
-                    raise
-                if attempt < retries - 1:
-                    log.warning(f"Gemini xato ({attempt+1}/{retries}): {e}")
-                    time.sleep(8)
-                else:
-                    log.warning(f"Gemini {retries} urinishdan keyin xato — OpenRouter ga o'tilmoqda")
+# ══════════════════════════════════════════════════════════════
+# Yordamchi funksiyalar — har bir API servisi
+# ══════════════════════════════════════════════════════════════
 
-    # ── 2. OpenRouter fallback ───────────────────────────────
+def _ask_gemini(prompt, max_tokens=2500, retries=6) -> str:
+    """Gemini 2.0 Flash — asosiy tarjimon (bepul, 15 RPM).
+    429 limitda ko'proq sabr qilib qayta urinadi."""
+    body = {
+        "contents": [{"parts": [{"text": prompt}]}],
+        "generationConfig": {"temperature": 0.3, "maxOutputTokens": max_tokens},
+    }
+    for attempt in range(retries):
+        try:
+            r = requests.post(
+                _GEMINI_URL,
+                params={"key": GEMINI_API_KEY},
+                headers={"Content-Type": "application/json"},
+                json=body, timeout=90,
+            )
+            if r.status_code == 429:
+                wait = 30 * (attempt + 1)   # 30s, 60s, 90s, 120s, 150s, 180s
+                log.warning(f"Gemini limit — {wait}s kutilmoqda (urinish {attempt+1}/{retries})...")
+                time.sleep(wait)
+                continue
+            if r.status_code in (401, 403):
+                raise Exception("Gemini API key yaroqsiz")
+            if r.status_code == 400:
+                raise Exception(f"Gemini 400: {r.text[:100]}")
+            r.raise_for_status()
+            return r.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+        except Exception as e:
+            if any(x in str(e) for x in ("400:", "yaroqsiz")):
+                raise
+            if attempt < retries - 1:
+                log.warning(f"Gemini urinish {attempt+1}/{retries}: {e}")
+                time.sleep(10)
+            else:
+                raise Exception(f"Gemini {retries} urinishdan keyin xato: {e}")
+    raise Exception("Gemini: barcha urinishlar muvaffaqiyatsiz")
+
+
+def _ask_openrouter(prompt, max_tokens=2500) -> str:
+    """OpenRouter — claude-3-5-haiku (yuqori sifat, ko'p til).
+    Faqat Gemini to'liq muvaffaqiyatsiz bo'lganda ishlatiladi."""
     if not OPENROUTER_API_KEY:
-        raise Exception("Na Gemini, na OpenRouter API key topilmadi!")
-
-    log.info("  ↩️  OpenRouter fallback (openai/gpt-4o-mini)...")
+        raise Exception("OPENROUTER_API_KEY yo'q")
     headers = {
         "Authorization": f"Bearer {OPENROUTER_API_KEY}",
         "Content-Type":  "application/json",
@@ -356,7 +400,7 @@ def groq_ask(prompt, max_tokens=2500, retries=4):
         "X-Title":       "1Kun Global News",
     }
     body = {
-        "model":       "openai/gpt-4o-mini",
+        "model":       "anthropic/claude-3-5-haiku",   # Gemini sifatiga yaqin
         "messages":    [{"role": "user", "content": prompt}],
         "temperature": 0.3,
         "max_tokens":  max_tokens,
@@ -365,19 +409,47 @@ def groq_ask(prompt, max_tokens=2500, retries=4):
         try:
             r = requests.post(
                 "https://openrouter.ai/api/v1/chat/completions",
-                headers=headers, json=body, timeout=60,
+                headers=headers, json=body, timeout=90,
             )
             if r.status_code == 429:
                 time.sleep(20)
                 continue
+            if r.status_code in (401, 402, 403):
+                raise Exception(f"OpenRouter {r.status_code}: {r.text[:100]}")
             r.raise_for_status()
             return r.json()["choices"][0]["message"]["content"].strip()
         except Exception as e:
+            if any(x in str(e) for x in ("401", "402", "403")):
+                raise
             if attempt < 2:
                 time.sleep(10)
             else:
-                raise Exception(f"OpenRouter fallback ham xato: {e}")
-    raise Exception("Barcha tarjimon urinishlari muvaffaqiyatsiz")
+                raise Exception(f"OpenRouter xato: {e}")
+    raise Exception("OpenRouter: barcha urinishlar muvaffaqiyatsiz")
+
+
+def groq_ask(prompt, max_tokens=2500, retries=6):
+    """Tarjimon zanjiri: 1.Gemini (6 urinish, uzun sabr) → 2.OpenRouter (claude-3-5-haiku)"""
+    errors = []
+
+    # ── 1. Gemini 2.0 Flash (asosiy, bepul) ─────────────────
+    # 6 marta urinadi: 30s, 60s, 90s, 120s, 150s, 180s kutadi
+    if GEMINI_API_KEY:
+        try:
+            return _ask_gemini(prompt, max_tokens, retries)
+        except Exception as e:
+            log.warning(f"Gemini muvaffaqiyatsiz → OpenRouter ga o'tilmoqda: {e}")
+            errors.append(f"Gemini: {e}")
+
+    # ── 2. OpenRouter — claude-3-5-haiku (yuqori sifat) ─────
+    if OPENROUTER_API_KEY:
+        log.info("  ↩️  OpenRouter (claude-3-5-haiku)...")
+        try:
+            return _ask_openrouter(prompt, max_tokens)
+        except Exception as e:
+            errors.append(f"OpenRouter: {e}")
+
+    raise Exception("Barcha tarjimon servislari muvaffaqiyatsiz: " + " | ".join(errors))
 
 
 def parse_json(raw):
@@ -393,8 +465,36 @@ def parse_json(raw):
 def groq_translate(title, description, source):
     """BITTA so'rov — barcha maydonlar + skriptlar"""
 
-    prompt = f"""You are a professional multilingual news editor for "1Kun Global" Uzbek news channel.
+    # ── Manba tekshiruvi: Lebanon vs Libya farqlash ──────────
+    _src_text = (title + " " + (description or "")).lower()
+    _is_lebanon = any(kw in _src_text for kw in
+                      ("lebanon", "liban", "beirut", "lebanese", "hezbollah",
+                       "south lebanon", "southern lebanon", "nasrallah"))
+    _is_libya   = any(kw in _src_text for kw in
+                      ("libya", "libyan", "tripoli", "benghazi", "gaddafi",
+                       "haftar", "tobruk"))
 
+    # Prompt uchun geo-ogohlantirish
+    if _is_lebanon and not _is_libya:
+        _geo_warning = (
+            "\n\n🚨 GEO-CRITICAL: This news is about LEBANON (Ливан/Livan) — "
+            "a country in the Middle East. "
+            "NEVER write 'Ливия' or 'Liviya' — that is Libya (Africa)! "
+            "Lebanon = Ливан (Uzbek/Russian), Livan (Latin Uzbek), Liban (French). "
+            "Beirut is Lebanon's capital. Hezbollah is a Lebanese group.\n"
+        )
+    elif _is_libya and not _is_lebanon:
+        _geo_warning = (
+            "\n\n🚨 GEO-CRITICAL: This news is about LIBYA (Ливия/Liviya) — "
+            "a country in North Africa. "
+            "NEVER write 'Ливан' or 'Livan' — that is Lebanon (Middle East)! "
+            "Libya = Ливия (Uzbek/Russian), Liviya (Latin Uzbek).\n"
+        )
+    else:
+        _geo_warning = ""
+
+    prompt = f"""You are a professional multilingual news editor for "1Kun Global" Uzbek news channel.
+{_geo_warning}
 News title: {title}
 News details: {description}
 
@@ -405,14 +505,14 @@ Example: "Six months after ceasefire" → "Оташбас бошланганид
 Return ONLY valid JSON, no extra text, no markdown:
 {{
   "sarlavha_uz": "⚠️ ФАҚАТ ЎЗБЕК КИРИЛЛ АЛИФБОСИДА — инглизча ёзма! 5-8 сўз, sentence case. Намуна: 'Трамп Европага янги божхона солиғини эълон қилди'. Trump=Трамп, Biden=Байден, NATO=НАТО, fumes=ғазабланди, rant=танқид",
-  "jumla1_uz": "⚠️ ФАҚАТ ЎЗБЕК КИРИЛЛ — инглизча ёзма! Воқеанинг асосий мазмуни, 2 жумла.",
-  "jumla2_uz": "⚠️ ФАҚАТ ЎЗБЕК КИРИЛЛ — инглизча ёзма! Қўшимча тафсилот, 2 жумла.",
-  "sarlavha_ru": "Заголовок 5-8 слов на русском, sentence case (только первое слово и имена собственные с заглавной). Пример: 'Трамп объявил новые пошлины для Европы'",
-  "jumla1_ru": "Главное событие, 2 предложения на русском языке",
-  "jumla2_ru": "Дополнительные детали, 2 предложения на русском",
-  "sarlavha_en": "English headline 5-8 words, sentence case (only first word and proper nouns capitalized). Example: 'Trump announces new tariffs on European goods'",
-  "jumla1_en": "Main event 2 sentences in English",
-  "jumla2_en": "Additional details 2 sentences in English",
+  "jumla1_uz": "⚠️ ФАҚАТ ЎЗБЕК КИРИЛЛ — инглизча ёзма! Воқеанинг асосий мазмуни батафсил, 4-5 жумла. Нима бўлди, қаерда, ким, нима учун — барчасини ёз. Тафсилотлар ва контекст қўш.",
+  "jumla2_uz": "⚠️ ФАҚАТ ЎЗБЕК КИРИЛЛ — инглизча ёзма! Қўшимча муҳим тафсилотлар, 4-5 жумла. Натижалар, реакциялар, тарихий фон, эксперт фикрлари.",
+  "sarlavha_ru": "Заголовок 5-8 слов на РУССКОМ языке (не на английском!), sentence case. Пример: 'Трамп объявил новые пошлины для Европы'",
+  "jumla1_ru": "⚠️ ТОЛЬКО РУССКИЙ ЯЗЫК — не пиши по-английски! Главное событие подробно, 4-5 предложений. Что произошло, где, кто, почему — всё подробно.",
+  "jumla2_ru": "⚠️ ТОЛЬКО РУССКИЙ ЯЗЫК — не пиши по-английски! Дополнительные детали, 4-5 предложений. Последствия, реакции, исторический контекст.",
+  "sarlavha_en": "English headline 5-8 words, sentence case. Example: 'Trump announces new tariffs on European goods'",
+  "jumla1_en": "Main event detailed, 4-5 sentences in English. What happened, where, who, why — full context.",
+  "jumla2_en": "Additional details 4-5 sentences. Consequences, reactions, historical background.",
   "script_uz": "[450-500 so'z, SOF O'ZBEK LOTIN tilida — bu TTS uchun. Intro/outro yozma. Ruscha so'z EMAS. Xorijiy nomlar: Trump=Tramp, Biden=Bayden, Netanyahu=Netanyaxu. Yangilik mazmunini, kontekstini, tarixini va tafsilotlarini yoz.]",
   "script_ru": "[450-500 слов на русском языке. Без вступления и заключения типа 'В эфире...'. Добавь контекст, историю, детали события.]",
   "script_en": "[450-500 words in English. No intro/outro phrases. Add context, background and details about the event.]",
@@ -459,13 +559,15 @@ RULES:
   Islamabad=Исломобод, Tehran=Теҳрон, Damascus=Дамашқ, Baghdad=Бағдод,
   Kabul=Қобул, Delhi=Деҳли, Ankara=Анқара, Istanbul=Истанбул,
   Beirut=Байрут, Riyadh=Риёд, Doha=Доҳа, Tokyo=Токио (NOT Токиё)
-- UZBEK TERMS: ceasefire=оташкесим (NOT оташбас!), West Bank=Ғарбий соҳил,
-  airstrikes=авиазарба, sanctions=санкциялар, negotiations=музокаралар
+- UZBEK TERMS: ceasefire=ўт очишни тўхтатиш (NOT оташбас, NOT оташкесим!),
+  West Bank=Ғарбий соҳил, airstrikes=авиазарба, sanctions=санкциялар,
+  negotiations=музокаралар, Jewish/jew=яҳудий (NOT еврей!),
+  Jews=яҳудийлар, Israeli=исроиллик, settlement=мустамлака
 - UZBEK PLACE NAMES for script_uz (LATIN TTS):
-  Israel=Isroil (NOT Izrail!), Lebanon=Liviya),
+  Israel=Isroil (NOT Izrail!), Lebanon=Livan (NOT Liviya! Liviya=Libya/Afrika),
   Iran=Eron, Iraq=Iroq, Palestine=Falastin, Syria=Suriya, Gaza=Gʻazo,
-  Lebanon=Livan (NOT Liviya! Liviya=Libya/Afrika), Turkey=Turkiya, Egypt=Misr,
-  Saudi Arabia=Saudiya Arabistoni, ceasefire=oʻt-kes (yoki oʻtkirim)
+  Turkey=Turkiya, Egypt=Misr, Saudi Arabia=Saudiya Arabistoni,
+  ceasefire=oʻt ochishni toʻxtatish
 - search_queries: REAL EVENT footage only, NO studio/anchor/presenter. Use EXACT names from the news.
 - keywords_en: 5 SPECIFIC proper nouns — person names, countries, organizations.
 - shot_list: 6 shots that tell the visual story. Each "search" must target FIELD footage — NO anchors, NO studio, NO panel, NO interview, NO analysis, NO presenter. Use specific locations, people, actions. Include year 2026."""
@@ -473,21 +575,23 @@ RULES:
     try:
         data = parse_json(groq_ask(prompt, max_tokens=3000))
     except Exception as e:
-        log.warning(f"Groq tarjima xato: {e}")
-        # Fallback: sarlavha_uz bo'sh — lat2cyr(inglizcha) axlat hosil qiladi
+        log.warning(f"Tarjima xato (barcha servislar): {e}")
+        # Fallback: UZ/RU bo'sh (placeholder emas!), EN — orijinal matn
+        _en_script = (description or title or "").strip()
+        _en_j1     = _en_script[:600] if _en_script else title
         data = {
-            "sarlavha_uz":  "",           # Bo'sh — keyin retry qilinadi
+            "sarlavha_uz":  "",           # Bo'sh — inglizcha gibberish bo'lmasin
             "jumla1_uz":    "",
             "jumla2_uz":    "",
-            "sarlavha_ru":  title[:80],
-            "jumla1_ru":    title,
+            "sarlavha_ru":  "",           # Bo'sh — inglizcha chiqmasin
+            "jumla1_ru":    "",           # Placeholder EMAS — bo'sh, RU kanal o'tkaziladi
             "jumla2_ru":    "",
             "sarlavha_en":  title[:80],
-            "jumla1_en":    title,
+            "jumla1_en":    _en_j1,
             "jumla2_en":    "",
-            "script_uz":    "",           # Bo'sh — extend_script inglizchani uzaytirmaydi
-            "script_ru":    title,
-            "script_en":    title,
+            "script_uz":    "",
+            "script_ru":    "",
+            "script_en":    _en_script,   # To'liq inglizcha matn (title emas!)
             "daraja":       "xabar",
             "hashtag_uz":   "#Янгилик #Дунё #1КУН",
             "hashtag_ru":   "#Новости #Мир #1День",
@@ -499,6 +603,15 @@ RULES:
             "location_ru":  "",
             "location_en":  "",
         }
+
+    # ── AI placeholder larni tozalash: {musiqa}, {sarlavha}, {yangilik} ──
+    # AI ba'zan JSON da to'ldirilmagan o'zgaruvchi qoldiradi — barchani o'chirish
+    _placeholder_re = re.compile(r'\{[^}]{1,40}\}')
+    for _pf in ("sarlavha_uz","sarlavha_ru","sarlavha_en",
+                "jumla1_uz","jumla2_uz","jumla1_ru","jumla2_ru",
+                "jumla1_en","jumla2_en","script_uz","script_ru","script_en"):
+        if data.get(_pf):
+            data[_pf] = _placeholder_re.sub('', data[_pf]).strip()
 
     # ── Post-processing: CAPS → Sentence Case ────────────────────
     for field in ("sarlavha_uz", "sarlavha_ru", "sarlavha_en"):
@@ -571,26 +684,27 @@ RULES:
                 data[field] = fixed
 
     # ── script_uz — Lotin, TTS uchun; lotin joy nomlari tuzatish ─
-    _LATIN_PLACES = {
-        # Xato → To'g'ri (lotin o'zbek TTS uchun)
-        "Izrail":   "Isroil",
-        "Isroil":   "Isroil",   # To'g'ri — o'zgartirmaslik
-        "Liviya":   "Liviya",   # Bu Liviya (Afrika) — LIBAN emas!
-        "Livon":    "Livan",    # AI xatosi
-        "Livan":    "Livan",    # AI xatosi — Lebanon = Liban
-        "Lebanon":  "Livan",
-        "Iroq":     "Iroq",
+    _LATIN_PLACES_ALWAYS = {
+        # Har doim to'g'rilanadigan xatolar
+        "Izrail":     "Isroil",
+        "Livon":      "Livan",      # AI xatosi
+        "Lebanon":    "Livan",      # inglizcha qolsa
+        "Liban":      "Livan",
+        "Iroq":       "Iroq",
         "Afgoniston": "Afgʻoniston",
-        "Pokiston": "Pokiston",
+        "Pokiston":   "Pokiston",
     }
     script = data.get("script_uz", "")
     if script:
         import re as _re
-        for wrong, right in _LATIN_PLACES.items():
+        for wrong, right in _LATIN_PLACES_ALWAYS.items():
             if wrong in script and wrong != right:
                 script = _re.sub(r'(?<![a-zA-Z])' + _re.escape(wrong) + r'(?![a-zA-Z])',
                                  right, script)
         data["script_uz"] = script
+
+    # (Eski kontekst-ga asoslangan tuzatish olib tashlandi —
+    #  endi _is_lebanon/_is_libya manba-asosli tuzatish OXIRDA bajariladi)
 
     # ── Hashtag tekshiruvi — placeholder bo'lsa yangilash ────
     kw_en = data.get("keywords_en", [])
@@ -621,14 +735,54 @@ RULES:
                 data[lang_key] = fixed
                 log.info(f"✅ {lang_key} tuzatildi: '{fixed}'")
             else:
-                # Hali ham xato — UZ uchun bo'sh qoldirish yaxshi
+                # Hali ham xato — UZ va RU uchun bo'sh qolish yaxshi
                 # (lat2cyr(inglizcha) = "Трумп агаин фумес" kabi axlat hosil qiladi!)
-                if lang_code == "uz":
-                    data[lang_key] = ""   # Bo'sh yaxshi — axlatdan afzal
-                    log.warning(f"⚠️  {lang_key} bo'sh qoldirildi (lat2cyr axlat bo'lmasin)")
-                else:
+                # EN kanalda inglizcha kanal uchun orijinal nom ishlatiladi
+                if lang_code in ("uz", "ru"):
+                    data[lang_key] = ""   # Bo'sh — inglizcha sarlavha UZ/RU kanalda chiqmasin
+                    log.warning(f"⚠️  {lang_key} bo'sh qoldirildi (inglizcha sarlavha {lang_code} kanalga mos emas)")
+                else:  # EN uchun inglizcha orijinal nom yaxshi
                     data[lang_key] = en_title[:80]
                     log.warning(f"⚠️  {lang_key} fallback (original): '{en_title[:60]}'")
+
+    # ══════════════════════════════════════════════════════════
+    # Barcha matn maydonlari — bosh harf + lotin-kirill tuzatish
+    # (Groq modeli ba'zan kichik harfdan boshlaydi va lotin aralashtiradi)
+    # ══════════════════════════════════════════════════════════
+    _LATIN_IN_CYR = re.compile(r'\b[a-zA-Z][a-zA-Z\'\u02BB\u02BC]{2,}\b')
+
+    def _fix_latin_in_cyr_text(text: str) -> str:
+        """Kirill matnidagi lotin so'zlarni (3+ harf) kirill ga o'tkazish."""
+        if not text or not _LATIN_IN_CYR.search(text):
+            return text
+        def _convert(m):
+            w = m.group(0)
+            if w.isupper():   # NATO, UN, USA kabi — saqlash
+                return w
+            return lat2cyr(w.lower())
+        return _LATIN_IN_CYR.sub(_convert, text)
+
+    # UZ Kirill maydoni: lotin so'zlar + bosh harf
+    for _f in ("sarlavha_uz", "jumla1_uz", "jumla2_uz"):
+        val = data.get(_f, "")
+        if not val:
+            continue
+        val = _fix_latin_in_cyr_text(val)
+        if val and val[0].islower():
+            val = val[0].upper() + val[1:]
+        data[_f] = val
+
+    # RU Kirill maydoni: bosh harf
+    for _f in ("sarlavha_ru", "jumla1_ru", "jumla2_ru"):
+        val = data.get(_f, "")
+        if val and val[0].islower():
+            data[_f] = val[0].upper() + val[1:]
+
+    # EN maydoni: bosh harf
+    for _f in ("sarlavha_en", "jumla1_en", "jumla2_en", "script_en"):
+        val = data.get(_f, "")
+        if val and val[0].islower():
+            data[_f] = val[0].upper() + val[1:]
 
     # ── Eski nom uchun moslik ─────────────────────────────────
     data["sarlavha"]             = data.get("sarlavha_uz", "")
@@ -638,5 +792,45 @@ RULES:
     data["youtube_script_latin"] = data.get("script_uz", "")
     data["location"]             = data.get("location_uz", "")
     data.setdefault("keywords_ru", [])
+
+    # ════════════════════════════════════════════════════════════
+    # LEBANON / LIBYA — manba asosida qat'iy tuzatish
+    #
+    #  Inglizcha  →  Ўзбекча/Русча   Lotin ўзбек (TTS)
+    #  ─────────────────────────────────────────────
+    #  lebanon    →  Ливан           Livan
+    #  liban      →  Ливан           Livan
+    #  beirut     →  Ливан           Livan
+    #  lebanese   →  Ливан           Livan
+    #  hezbollah  →  Ливан           Livan
+    #  nasrallah  →  Ливан           Livan
+    #  ─────────────────────────────────────────────
+    #  libya      →  Ливия           Liviya
+    #  libyan     →  Ливия           Liviya
+    #  tripoli    →  Ливия           Liviya
+    #  benghazi   →  Ливия           Liviya
+    #  haftar     →  Ливия           Liviya
+    #  tobruk     →  Ливия           Liviya
+    # ════════════════════════════════════════════════════════════
+    def _force_country(d, wrong_cyr, right_cyr, wrong_lat, right_lat):
+        """Barcha string maydondlarda wrong → right almashtirish."""
+        cnt = 0
+        for fld, val in list(d.items()):
+            if not isinstance(val, str):
+                continue
+            new = val.replace(wrong_cyr, right_cyr).replace(wrong_lat, right_lat)
+            if new != val:
+                d[fld] = new
+                cnt += 1
+        return cnt
+
+    if _is_lebanon and not _is_libya:
+        n = _force_country(data, "Ливия", "Ливан", "Liviya", "Livan")
+        if n:
+            log.info(f"Lebanon fix: Ливия->Ливан, Liviya->Livan ({n} maydon)")
+    elif _is_libya and not _is_lebanon:
+        n = _force_country(data, "Ливан", "Ливия", "Livan", "Liviya")
+        if n:
+            log.info(f"Libya fix: Ливан->Ливия, Livan->Liviya ({n} maydon)")
 
     return data

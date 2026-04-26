@@ -37,35 +37,35 @@ FPS     = 24
 #   tezkor/xabar          → Madina (ayol)  — ravon, aniq
 VOICES = {
     "uz": {
-        # Standart (yangilik, xabar)
+        # Standart — Madina (ayol, aniq va issiq tembr)
         "default": {
             "voice":  "uz-UZ-MadinaNeural",
-            "rate":   "-8%",    # biroz sekin → aniqroq
-            "pitch":  "+0Hz",
-            "volume": "+20%",
+            "rate":   "-5%",
+            "pitch":  "+18Hz",   # Tembr ko'tarildi (yanada qat'iy va aniq)
+            "volume": "+25%",
         },
-        # Muhim (siyosat, urush, falokat) — erkak ovozi
+        # Muhim (urush/siyosat) — Sardor (erkak, jiddiy)
         "muhim": {
             "voice":  "uz-UZ-SardorNeural",
-            "rate":   "-6%",    # unchalik sekin emas
-            "pitch":  "+8Hz",   # tembr ko'tarilgan (g'alizlikni kamaytiradi)
-            "volume": "+20%",
+            "rate":   "-4%",
+            "pitch":  "+15Hz",   # Bass tembr qo'shildi
+            "volume": "+25%",
         },
     },
     "ru": {
         "default": {
             "voice":  "ru-RU-SvetlanaNeural",
-            "rate":   "-3%",
-            "pitch":  "+0Hz",
-            "volume": "+15%",
+            "rate":   "-2%",
+            "pitch":  "+20Hz",   # Tembr ko'tarildi
+            "volume": "+20%",
         },
     },
     "en": {
         "default": {
             "voice":  "en-US-GuyNeural",
-            "rate":   "-3%",
-            "pitch":  "-10Hz",
-            "volume": "+15%",
+            "rate":   "-2%",
+            "pitch":  "+15Hz",   # Pastroq bass tembr emas, balki yuqori clarity
+            "volume": "+20%",
         },
     },
 }
@@ -103,4 +103,7 @@ AUDIO_FX = {
 # YouTube auth
 CLIENT_SECRETS = "client_secrets.json"
 TOKEN_FILE     = "youtube_token.json"
-SCOPES         = ["https://www.googleapis.com/auth/youtube.upload"]
+SCOPES         = [
+    "https://www.googleapis.com/auth/youtube.upload",
+    "https://www.googleapis.com/auth/youtube",          # playlist uchun
+]

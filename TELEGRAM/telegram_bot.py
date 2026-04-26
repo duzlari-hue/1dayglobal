@@ -1,4 +1,5 @@
 """telegram_bot.py — Telegram post yuborish"""
+import re
 import requests
 import logging
 from datetime import datetime
@@ -93,10 +94,20 @@ def send_all_languages(d, article):
     daraja = d.get("daraja", "xabar")
 
     # O'ZBEK → @birkunday  (barcha UZ matnlar kiriллcha bo'lishi shart)
+    _j1_uz = _ensure_cyr(d.get("jumla1_uz", ""))
+    _j2_uz = _ensure_cyr(d.get("jumla2_uz", ""))
+
+    # jumla2 bo'sh bo'lsa — jumla1 ni jumlalarga bo'lib ikkinchi qism qilamiz
+    if not _j2_uz and _j1_uz:
+        _sents = re.split(r'(?<=[.!?…])\s+', _j1_uz.strip())
+        if len(_sents) >= 4:
+            mid = len(_sents) // 2
+            _j1_uz = " ".join(_sents[:mid]).strip()
+            _j2_uz = " ".join(_sents[mid:]).strip()
+
     post_uz = make_post(
         _ensure_cyr(d.get("sarlavha_uz", "")),
-        _ensure_cyr(d.get("jumla1_uz", "")),
-        _ensure_cyr(d.get("jumla2_uz", "")),
+        _j1_uz, _j2_uz,
         daraja,
         _ensure_cyr(d.get("hashtag_uz", "")),
         _ensure_cyr(d.get("location_uz", "")),
@@ -105,18 +116,111 @@ def send_all_languages(d, article):
     if send_telegram(post_uz, TELEGRAM_CHANNEL_UZ):
         log.info(f"✅ Telegram UZ → {TELEGRAM_CHANNEL_UZ}")
 
-    # RUS → @birkunday_ru
-    post_ru = make_post(
-        d["sarlavha_ru"], d["jumla1_ru"], d["jumla2_ru"],
-        daraja, d["hashtag_ru"], d.get("location_ru", ""), "ru"
-    )
-    if send_telegram(post_ru, TELEGRAM_CHANNEL_RU):
-        log.info(f"✅ Telegram RU → {TELEGRAM_CHANNEL_RU}")
+    # RUS → @birkunday_ru  (faqat kiriллcha matn yuboriladi)
+    _CYR_CHARS  = "абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ"
+    _ru_text    = d.get("sarlavha_ru", "") + d.get("jumla1_ru", "")
+    _ru_letters = [c for c in _ru_text if c.isalpha()]
+    _ru_cyr_pct = sum(1 for c in _ru_letters if c in _CYR_CHARS) / max(len(_ru_letters), 1)
+    if _ru_cyr_pct < 0.50:
+        log.warning(f"⚠️  RU matn kiriллcha emas ({_ru_cyr_pct:.0%}) — o'tkazildi")
+    else:
+        _j1_ru = d.get("jumla1_ru", "")
+        _j2_ru = d.get("jumla2_ru", "")
+        # jumla2_ru bo'sh bo'lsa — jumla1_ru ni bo'lamiz
+        if not _j2_ru and _j1_ru:
+            _sents_ru = re.split(r'(?<=[.!?…])\s+', _j1_ru.strip())
+            if len(_sents_ru) >= 4:
+                mid_ru = len(_sents_ru) // 2
+                _j1_ru = " ".join(_sents_ru[:mid_ru]).strip()
+                _j2_ru = " ".join(_sents_ru[mid_ru:]).strip()
+        post_ru = make_post(
+            d["sarlavha_ru"], _j1_ru, _j2_ru,
+            daraja, d["hashtag_ru"], d.get("location_ru", ""), "ru"
+        )
+        if send_telegram(post_ru, TELEGRAM_CHANNEL_RU):
+            log.info(f"✅ Telegram RU → {TELEGRAM_CHANNEL_RU}")
 
     # INGLIZ → @birkunday_en
+    _j1_en = d.get("jumla1_en", "")
+    _j2_en = d.get("jumla2_en", "")
+    # jumla2_en bo'sh bo'lsa — jumla1_en ni bo'lamiz
+    if not _j2_en and _j1_en:
+        _sents_en = re.split(r'(?<=[.!?…])\s+', _j1_en.strip())
+        if len(_sents_en) >= 4:
+            mid_en = len(_sents_en) // 2
+            _j1_en = " ".join(_sents_en[:mid_en]).strip()
+            _j2_en = " ".join(_sents_en[mid_en:]).strip()
     post_en = make_post(
-        d["sarlavha_en"], d["jumla1_en"], d["jumla2_en"],
+        d["sarlavha_en"], _j1_en, _j2_en,
         daraja, d["hashtag_en"], d.get("location_en", ""), "en"
     )
     if send_telegram(post_en, TELEGRAM_CHANNEL_EN):
         log.info(f"✅ Telegram EN → {TELEGRAM_CHANNEL_EN}")
+
+
+# ══════════════════════════════════════════════════════════════
+# Kunlik digest — 5-6 ta yangilik bir postda (kechqurun)
+# ══════════════════════════════════════════════════════════════
+def send_daily_digest(articles: list, lang: str = "uz"):
+    """
+    5-6 ta yangilikni bitta Telegram postda yuborish.
+    articles — [{"sarlavha": str, "jumla1": str, "daraja": str}, ...]
+    """
+    if not articles:
+        return False
+
+    channel = {
+        "uz": TELEGRAM_CHANNEL_UZ,
+        "ru": TELEGRAM_CHANNEL_RU,
+        "en": TELEGRAM_CHANNEL_EN,
+    }.get(lang, TELEGRAM_CHANNEL_UZ)
+
+    # Sarlavha
+    digest_title = {
+        "uz": "📋 KUNNING ASOSIY YANGILIKLARI",
+        "ru": "📋 ГЛАВНЫЕ НОВОСТИ ДНЯ",
+        "en": "📋 TODAY'S TOP NEWS",
+    }.get(lang, "📋 TOP NEWS")
+
+    vaqt = datetime.now(TASHKENT).strftime("🕐 %H:%M | %d.%m.%Y")
+    kanal = {
+        "uz": TELEGRAM_CHANNEL_UZ,
+        "ru": TELEGRAM_CHANNEL_RU,
+        "en": TELEGRAM_CHANNEL_EN,
+    }.get(lang, TELEGRAM_CHANNEL_UZ)
+
+    post = f"<b>{digest_title}</b>\n"
+    post += "━" * 28 + "\n\n"
+
+    for i, art in enumerate(articles[:6], 1):
+        sarlavha = art.get("sarlavha", "").strip()
+        jumla    = art.get("jumla1", "").strip()
+        daraja   = art.get("daraja", "xabar")
+
+        emoji = {"muhim": "🔴", "tezkor": "🟠"}.get(daraja, "🟢")
+        if sarlavha:
+            post += f"{i}. {emoji} <b>{sarlavha}</b>\n"
+        if jumla:
+            post += f"   {jumla[:120]}{'...' if len(jumla) > 120 else ''}\n"
+        post += "\n"
+
+    post += "━" * 28 + "\n"
+    post += f"{vaqt}\n"
+    post += f"📰 {kanal}"
+
+    ok = send_telegram(post, channel)
+    if ok:
+        log.info(f"✅ Kunlik digest [{lang.upper()}] → {channel} ({len(articles)} yangilik)")
+    else:
+        log.warning(f"⚠️  Kunlik digest [{lang.upper()}] yuborilmadi")
+    return ok
+
+
+def send_daily_digest_all(articles_by_lang: dict):
+    """3 tilda kunlik digest yuborish.
+    articles_by_lang = {"uz": [...], "ru": [...], "en": [...]}
+    """
+    for lang in ("uz", "ru", "en"):
+        articles = articles_by_lang.get(lang, [])
+        if articles:
+            send_daily_digest(articles, lang)

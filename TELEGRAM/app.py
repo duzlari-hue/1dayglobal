@@ -25,7 +25,7 @@ from apscheduler.triggers.cron import CronTrigger
 from config import TASHKENT, SCHEDULE_HOURS, TELEGRAM_CHANNEL_UZ
 from rss import fetch_rss_news, save_seen_link
 from translator import groq_translate
-from telegram_bot import send_all_languages
+from telegram_bot import send_all_languages, send_daily_digest_all
 
 logging.basicConfig(
     level=logging.INFO,
@@ -85,63 +85,129 @@ def run_pipeline():
 
     log.info(f"📰 {article['title'][:70]}...")
 
-    # 2. Groq tarjima (1 so'rov)
+    # 2. Tarjima (Gemini → OpenRouter zanjiri)
     try:
         d = groq_translate(article["title"], article["description"], article["source"])
     except Exception as e:
-        log.error(f"Groq: {e}")
-        return
+        log.error(f"Barcha tarjimon servislari muvaffaqiyatsiz: {e}")
+        # Tarjima to'liq muvaffaqiyatsiz — faqat EN kanalga inglizcha post yuboramiz
+        _desc = (article.get("description", "") or article.get("title", "")).strip()
+        log.warning("⚠️  Faqat EN kanalga inglizcha post yuborilmoqda (tarjima yo'q)...")
+        d = {
+            "sarlavha_uz": "", "jumla1_uz": "", "jumla2_uz": "",
+            "sarlavha_ru": "", "jumla1_ru": "", "jumla2_ru": "",
+            "sarlavha_en": article.get("title", "")[:80],
+            "jumla1_en":   _desc[:500],
+            "jumla2_en":   "",
+            "script_uz":   "", "script_ru": "",
+            "script_en":   _desc,
+            "daraja":      "xabar",
+            "hashtag_uz":  "#Янгилик #1КУН",
+            "hashtag_ru":  "#Новости #1День",
+            "hashtag_en":  "#News #World #1Day",
+            "keywords_en": article.get("title", "").split()[:5],
+            "search_queries": [article.get("title", "")[:50]],
+            "location_uz": "", "location_ru": "", "location_en": "",
+            "shot_list":   [], "hook_uz": "", "hook_ru": "",
+            "hook_en":     article.get("title", "")[:50],
+        }
 
     save_seen_link(article["link"], keywords=d.get("keywords_en", []))
 
     # 3. Telegram — 3 kanalga 3 tilda
     send_all_languages(d, article)
 
-    # 4. YouTube ga ma'lumot yuborish (alohida servis)
-    try:
-        import json
-        youtube_data = {
-            "article":  article,
-            "scripts": {
-                "uz": d.get("script_uz", ""),
-                "ru": d.get("script_ru", ""),
-                "en": d.get("script_en", ""),
-            },
-            "sarlavha": {
-                "uz": d.get("sarlavha_uz", ""),
-                "ru": d.get("sarlavha_ru", ""),
-                "en": d.get("sarlavha_en", ""),
-            },
-            # jumla1/jumla2 — YouTube tavsifi uchun (script emas)
-            "jumla": {
-                "uz": (d.get("jumla1_uz", "") + " " + d.get("jumla2_uz", "")).strip(),
-                "ru": (d.get("jumla1_ru", "") + " " + d.get("jumla2_ru", "")).strip(),
-                "en": (d.get("jumla1_en", "") + " " + d.get("jumla2_en", "")).strip(),
-            },
-            "keywords_en":    d.get("keywords_en", []),
-            "search_queries": d.get("search_queries", []),
-            "shot_list":      d.get("shot_list", []),
-            "hook": {
-                "uz": d.get("hook_uz", ""),
-                "ru": d.get("hook_ru", ""),
-                "en": d.get("hook_en", ""),
-            },
-            "location": {
-                "uz": d.get("location_uz", ""),
-                "ru": d.get("location_ru", ""),
-                "en": d.get("location_en", ""),
-            },
-            "daraja":   d.get("daraja", "xabar"),
-        }
-        os.makedirs("output/youtube_queue", exist_ok=True)
-        ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-        with open(f"output/youtube_queue/{ts}.json", "w", encoding="utf-8") as f:
-            json.dump(youtube_data, f, ensure_ascii=False, indent=2)
-        log.info(f"📁 YouTube navbat: {ts}.json")
-    except Exception as e:
-        log.warning(f"YouTube navbat xato: {e}")
+    # 4. Kunlik digest buferiga qo'shish
+    _DAILY_BUFFER.append(d)
+    log.info(f"📝 Digest buffer: {len(_DAILY_BUFFER)} ta yangilik")
+
+    # 5. YouTube queue — yangilikni qo'shish
+    _save_to_youtube_queue(d, article)
 
     log.info("✅ Pipeline tugadi\n")
+
+
+# ── YouTube queue ga yozish ────────────────────────────────────
+import json
+import pathlib
+
+_YOUTUBE_QUEUE = pathlib.Path(__file__).parent.parent / "YOUTUBE" / "queue"
+
+def _save_to_youtube_queue(d: dict, article: dict):
+    """Yangilikni YouTube queue papkasiga saqlash (analysis_maker uchun)."""
+    try:
+        _YOUTUBE_QUEUE.mkdir(exist_ok=True)
+        from datetime import datetime as _dt
+        ts = _dt.now().strftime("%Y%m%d_%H%M%S")
+        fname = _YOUTUBE_QUEUE / f"{ts}.json"
+
+        scripts = {
+            "uz": d.get("script_uz", "") or d.get("hook_uz", ""),
+            "ru": d.get("script_ru", "") or d.get("hook_ru", ""),
+            "en": d.get("script_en", "") or d.get("hook_en", ""),
+        }
+        sarlavha = {
+            "uz": d.get("sarlavha_uz", ""),
+            "ru": d.get("sarlavha_ru", ""),
+            "en": d.get("sarlavha_en", ""),
+        }
+        jumla = {
+            "uz": d.get("jumla1_uz", ""),
+            "ru": d.get("jumla1_ru", ""),
+            "en": d.get("jumla1_en", ""),
+        }
+        location = {
+            "uz": d.get("location_uz", ""),
+            "ru": d.get("location_ru", ""),
+            "en": d.get("location_en", ""),
+        }
+
+        queue_item = {
+            "article":      article,
+            "scripts":      scripts,
+            "sarlavha":     sarlavha,
+            "jumla":        jumla,
+            "location":     location,
+            "daraja":       d.get("daraja", "xabar"),
+            "keywords_en":  d.get("keywords_en", []),
+            "search_queries": d.get("search_queries", []),
+        }
+        with open(fname, "w", encoding="utf-8") as f:
+            json.dump(queue_item, f, ensure_ascii=False, indent=2)
+        log.info(f"📥 YouTube queue: {fname.name}")
+    except Exception as e:
+        log.warning(f"YouTube queue xato: {e}")
+
+
+# ── Kunlik digest pipeline ─────────────────────────────────────
+_DAILY_BUFFER = []   # kun davomida to'plangan yangiliklar
+
+
+def run_daily_digest():
+    """Kun bo'yi to'plangan 5-6 yangilikni kechqurun bitta postda yuborish."""
+    global _DAILY_BUFFER
+
+    if not _DAILY_BUFFER:
+        log.info("📋 Kunlik digest: bufer bo'sh, o'tkazildi")
+        return
+
+    log.info(f"📋 Kunlik digest: {len(_DAILY_BUFFER)} ta yangilik yuborilmoqda...")
+
+    articles_by_lang = {"uz": [], "ru": [], "en": []}
+    for d in _DAILY_BUFFER[-6:]:   # so'nggi 6 ta
+        for lang in ("uz", "ru", "en"):
+            sarlavha = d.get(f"sarlavha_{lang}", "")
+            jumla    = d.get(f"jumla1_{lang}", "")
+            if sarlavha or jumla:
+                articles_by_lang[lang].append({
+                    "sarlavha": sarlavha,
+                    "jumla1":   jumla,
+                    "daraja":   d.get("daraja", "xabar"),
+                })
+
+    send_daily_digest_all(articles_by_lang)
+    _DAILY_BUFFER.clear()
+    log.info("✅ Kunlik digest yuborildi, bufer tozalandi")
 
 
 def main():
@@ -162,11 +228,20 @@ def main():
             id=f"post_{hour}",
             misfire_grace_time=300,
         )
-    log.info(f"⏰ {', '.join(str(h)+':00' for h in SCHEDULE_HOURS)}")
+    # Kunlik digest — kechqurun 21:00 (barcha yangiliklar yig'ilgandan keyin)
+    scheduler.add_job(
+        run_daily_digest,
+        CronTrigger(hour=21, minute=0, timezone=TASHKENT),
+        id="daily_digest",
+        misfire_grace_time=300,
+    )
+    log.info(f"⏰ Yangiliklar: {', '.join(str(h)+':00' for h in SCHEDULE_HOURS)}")
+    log.info("⏰ Kunlik digest: 21:00 (Toshkent)")
     log.info("Ctrl+C — to'xtatish\n")
 
-    if "--now" in sys.argv:
+    if "--now" in sys.argv or "--once" in sys.argv:
         run_pipeline()
+        return
 
     scheduler.start()
 

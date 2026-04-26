@@ -168,19 +168,154 @@ def _repair_title(bad_title: str, original_en: str, lang: str) -> str:
     return original_en[:80]
 
 
+_STATUS_SUFFIXES = (
+    "_error.json", "_seen.json", "_skipped.json",
+    "_no_video.json", "_soft.json",
+)
+
+DIGEST_BATCH = 5      # Bir digestda nechta yangilik
+_CYR_UZ = "абвгдеёжзийклмнопрстуфхцчшщъыьэюяўқғҳАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯЎҚҒҲ"
+_GENERIC_QW = {"specific","location","event","country","conflict","raw","footage",
+               "ground","scene","aftermath","video","personname","countryname",
+               "organizationname","eventtopic","keyterm"}
+
+
+def _parse_queue_item(qfile: str, seen: set) -> dict | None:
+    """JSON fayldan yangilik ma'lumotlarini olish. Filtrlardan o'tmasa None."""
+    try:
+        with open(qfile, "r", encoding="utf-8") as f:
+            data = json.load(f)
+
+        article     = data["article"]
+        article_url = article.get("link", "")
+        title       = article.get("title", "")
+
+        if article_url and article_url in seen:
+            os.rename(qfile, qfile.replace(".json", "_seen.json"))
+            return None
+        if article_url and is_russian_source(article_url):
+            os.rename(qfile, qfile.replace(".json", "_skipped.json"))
+            return None
+        if not _is_important_news(title):
+            os.rename(qfile, qfile.replace(".json", "_soft.json"))
+            return None
+
+        scripts     = data.get("scripts", {})
+        sarlavhalar = data.get("sarlavha", {})
+        keywords_en = data.get("keywords_en", [])
+        search_q    = data.get("search_queries", [])
+        location    = data.get("location", {})
+        daraja      = data.get("daraja", "xabar")
+        jumlalar    = data.get("jumla", {})
+
+        # Sarlavhalarni tuzatish
+        try:
+            sys.path.insert(0, "../TELEGRAM")
+            from translator import _apply_uz_places, _fix_title_only
+
+            def _is_corrupt(text, lc):
+                if not text or len(text.strip()) < 5:
+                    return True
+                alpha = [c for c in text if c.isalpha()]
+                if not alpha:
+                    return True
+                if lc in ("uz", "ru"):
+                    if sum(1 for c in alpha if c.isascii()) / len(alpha) > 0.15:
+                        return True
+                    if sum(1 for c in alpha if c in _CYR_UZ) / len(alpha) < 0.60:
+                        return True
+                elif lc == "en":
+                    if sum(1 for c in alpha if c in _CYR_UZ) / len(alpha) > 0.30:
+                        return True
+                return False
+
+            for fix_lang in ("uz", "ru", "en"):
+                val = sarlavhalar.get(fix_lang, "")
+                if not _is_corrupt(val, fix_lang):
+                    continue
+                if fix_lang == "en" and not _is_corrupt(title, "en"):
+                    sarlavhalar["en"] = title[:100]
+                    continue
+                fixed = _fix_title_only(title, fix_lang)
+                sarlavhalar[fix_lang] = fixed if fixed and not _is_corrupt(fixed, fix_lang) else ""
+
+            uz_s = sarlavhalar.get("uz", "")
+            if uz_s:
+                sarlavhalar["uz"] = _apply_uz_places(uz_s)
+        except Exception as _e:
+            log.debug(f"Sarlavha tuzatish: {_e}")
+
+        # Kalit so'zlar
+        title_kw    = _title_keywords(title, count=6)
+        extra_kw    = [k for k in keywords_en if k not in title_kw
+                       and len(k.split()) <= 3 and k and k[0].isupper()
+                       and k.lower() not in _TITLE_STOP]
+        combined_kw = title_kw + extra_kw[:4]
+
+        return {
+            "qfile":       qfile,
+            "article_url": article_url,
+            "en_title":    sarlavhalar.get("en") or title,
+            "sarlavhalar": sarlavhalar,
+            "scripts":     scripts,
+            "jumlalar":    jumlalar,
+            "location":    location,
+            "daraja":      daraja,
+            "keywords_en": combined_kw,
+            "title":       title,
+        }
+    except Exception as e:
+        log.error(f"Parse xato {qfile}: {e}")
+        return None
+
+
+def _build_digest_item(raw: dict, lang: str) -> dict | None:
+    """Bitta yangilikni digest uchun formatlash."""
+    sarlavhalar = raw["sarlavhalar"]
+    scripts     = raw["scripts"]
+    jumlalar    = raw["jumlalar"]
+    location    = raw["location"]
+    title       = raw["title"]
+
+    sarlavha = sarlavhalar.get(lang, "")
+    if not _title_ok(sarlavha, lang):
+        sarlavha = _repair_title(sarlavha, title, lang)
+    if not sarlavha:
+        return None
+
+    script_raw = scripts.get(lang, "")
+    script_raw = re.sub(
+        r"^(Efirda\s+1KUN\s+Global\.?|В\s+эфире\s+1ДЕНЬ\s+Global\.?|"
+        r"This\s+is\s+1DAY\s+Global\.?)\s*",
+        "", script_raw, flags=re.IGNORECASE
+    ).strip()
+
+    jumla1 = jumlalar.get(lang, "") or script_raw[:200]
+
+    return {
+        "sarlavha":    sarlavha,
+        "jumla1":      jumla1,
+        "script":      script_raw,
+        "location":    location.get(lang, ""),
+        "daraja":      raw["daraja"],
+        "article_url": raw["article_url"],
+        "en_title":    raw["en_title"],
+        "keywords_en": raw["keywords_en"],
+    }
+
+
 def process_queue():
-    """youtube_queue papkasidagi JSON fayllarni qayta ishlash"""
-    from youtube_maker import fetch_youtube_clips, fetch_web_clips, fetch_clips_per_shot, youtube_pipeline, extract_keywords
+    """
+    Yangiliklar digest formatida qayta ishlash.
+
+    Har DIGEST_BATCH ta yangilik → bitta digest video (3 tilda).
+    Format: ochilish + har yangilik (sarlavha+foto) + yakunlash
+    100% ORIGINAL — YouTube monetizatsiyaga mos.
+    """
+    from digest_maker import digest_pipeline
 
     seen = load_seen()
 
-    # Faqat "toza" queue fayllarni olish — status suffixli fayllarni o'tkazib yuborish
-    # (_error, _seen, _skipped, _no_video, _soft suffikslari bilan tugagan fayllar
-    #  qayta ishlanmaydi — aks holda har safar yangi suffiks qo'shiladi)
-    _STATUS_SUFFIXES = (
-        "_error.json", "_seen.json", "_skipped.json",
-        "_no_video.json", "_soft.json",
-    )
     queue_files = sorted([
         f for f in glob.glob(f"{QUEUE_DIR}/*.json")
         if not any(f.endswith(suf) for suf in _STATUS_SUFFIXES)
@@ -192,241 +327,357 @@ def process_queue():
 
     log.info(f"Navbatda: {len(queue_files)} ta fayl")
 
+    # ── Barcha fayllarni parse qilamiz ────────────────────────
+    parsed = []
+    skip_files = []
     for qfile in queue_files:
-        try:
-            with open(qfile, "r", encoding="utf-8") as f:
-                data = json.load(f)
+        raw = _parse_queue_item(qfile, seen)
+        if raw:
+            parsed.append(raw)
+        else:
+            skip_files.append(qfile)
 
-            article        = data["article"]
-            scripts        = data["scripts"]
-            sarlavhalar    = data["sarlavha"]
-            keywords_en    = data.get("keywords_en", [])
-            search_queries = data.get("search_queries", [])
-            shot_list      = data.get("shot_list", [])
-            location       = data.get("location", {})
-            daraja         = data.get("daraja", "xabar")
-            article_url    = article.get("link", "")
+    log.info(f"  ✓ Yaroqli: {len(parsed)} ta | O'tkazildi: {len(skip_files)} ta")
 
-            # ── Ko'rilgan yangilik — o'tkazish ────────────────
-            if article_url and article_url in seen:
-                log.info(f"⏭ Ko'rilgan: {article_url[:70]}")
-                os.rename(qfile, qfile.replace(".json", "_seen.json"))
+    if not parsed:
+        log.info("Yaroqli yangilik yo'q")
+        return
+
+    # ── DIGEST_BATCH ta partiyalarga bo'lib digest yaratamiz ──
+    done_dir = f"{QUEUE_DIR}/done"
+    os.makedirs(done_dir, exist_ok=True)
+
+    for batch_start in range(0, len(parsed), DIGEST_BATCH):
+        batch = parsed[batch_start: batch_start + DIGEST_BATCH]
+        log.info(f"\n📺 Digest batch: {batch_start+1}–{batch_start+len(batch)}/{len(parsed)}")
+
+        any_lang_ok = False
+        # Social media uchun natijalarni to'playmiz
+        digest_videos = {}   # lang → video_path
+        short_videos  = {}   # lang → short_path
+        yt_urls       = {}   # lang → yt_url
+        sarlavhalar   = {}   # lang → sarlavha (FB/IG uchun)
+        jumlalar      = {}   # lang → jumla
+        location_map  = {}   # lang → location
+        daraja_main   = "xabar"
+
+        for lang in ["uz", "ru", "en"]:
+            # Har bir yangilik uchun digest item yasaymiz
+            items = []
+            for raw in batch:
+                item = _build_digest_item(raw, lang)
+                if item:
+                    items.append(item)
+
+            if len(items) < 1:
+                log.warning(f"  [{lang.upper()}] Hech item yo'q, o'tkazildi")
                 continue
 
-            # ── Rossiya manbasi — o'tkazish ───────────────────
-            if article_url and is_russian_source(article_url):
-                log.warning(f"⛔ Rossiya manbasi: {article_url[:70]}")
-                os.rename(qfile, qfile.replace(".json", "_skipped.json"))
-                continue
+            # Sarlavha/jumla/location ni social media uchun saqlaymiz
+            if items:
+                sarlavhalar[lang] = items[0].get("sarlavha", "")
+                jumlalar[lang]    = items[0].get("jumla1", "")
+                location_map[lang]= items[0].get("location", "")
+                daraja_main       = items[0].get("daraja", "xabar")
 
-            title = article.get("title", "")
-
-            # ── Muhim yangilik filtri — hayvon/sport/soft news rad ──
-            if not _is_important_news(title):
-                log.warning(f"⏭ Soft news: {title[:70]}")
-                os.rename(qfile, qfile.replace(".json", "_soft.json"))
-                continue
-
-            log.info(f"🎬 {title[:65]}...")
-
-            # ── Kalit so'zlar: AYN INGLIZCHA SARLAVHADAN (asosiy) ──
-            # AI skriptidan emas — sarlavha eng aniq va toza manba
-            title_kw = _title_keywords(title, count=6)
-            # AI taklif qilgan keywords_en ni ham qo'shamiz (nom, joy, tashkilot)
-            extra_kw = [k for k in keywords_en
-                        if k not in title_kw
-                        and len(k.split()) <= 3
-                        and k[0].isupper()
-                        and k.lower() not in _TITLE_STOP]
-            combined_kw = title_kw + extra_kw[:4]
-
-            # Qidiruv so'rovlari: sarlavha BIRINCHI, qolgan support rolida
-            GENERIC = {"specific", "location", "event", "country", "conflict",
-                       "raw", "footage", "ground", "scene", "aftermath", "video",
-                       "personname", "countryname", "organizationname", "eventtopic", "keyterm"}
-            clean_sq = [title]  # Asl sarlavha — eng muhim qidiruv
-            for q in search_queries:
-                if (not any(w.lower() in GENERIC for w in q.split())
-                        and len(q.split()) >= 3
-                        and q != title):
-                    clean_sq.append(q)
-
-            log.info(f"  🔑 Sarlavha kalit so'zlari: {combined_kw}")
-            log.info(f"  🔍 Asosiy qidiruv: {clean_sq[0][:70]}")
-
-            # ── 1. YouTube kliplar — shot_list yoki oddiy qidiruv ──
-            log.info("  🎬 YouTube kliplar qidirilmoqda...")
-            if shot_list and len(shot_list) >= 3:
-                log.info(f"  🎬 Shot list rejimi: {len(shot_list)} ta kadr...")
-                yt_clips = fetch_clips_per_shot(shot_list)
-                log.info(f"  🎬 Shot list: {len(yt_clips)} ta klip olindi")
-            else:
-                yt_clips = fetch_youtube_clips(
-                    combined_kw, count=5, search_queries=clean_sq)
-
-            # ── 2. Dailymotion + Vimeo — fallback ────────────
-            if len(yt_clips) < 2:
-                log.info("  🌐 Web kliplar (Dailymotion/Vimeo)...")
-                web_clips = fetch_web_clips(
-                    combined_kw, count=3, search_queries=clean_sq)
-                yt_clips = yt_clips + web_clips
-
-            if not yt_clips:
-                log.warning("  ⚠️  Video klip topilmadi — o'tkazildi")
-                os.rename(qfile, qfile.replace(".json", "_no_video.json"))
-                continue
-
-            # ── Sarlavhalarni tekshirish va tuzatish ─────────────
+            log.info(f"  [{lang.upper()}] {len(items)} ta yangilik digest yaratilmoqda...")
             try:
-                import sys as _sys
-                _sys.path.insert(0, "../TELEGRAM")
-                from translator import _apply_uz_places, lat2cyr, _fix_title_only
-                _CYR_UZ = "абвгдеёжзийклмнопрстуфхцчшщъыьэюяўқғҳАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯЎҚҒҲ"
+                result = digest_pipeline(items, lang)
+                # digest_pipeline endi (video_path, yt_url, short_path) qaytaradi
+                if isinstance(result, tuple):
+                    video_path, yt_url, short_path = result
+                else:
+                    video_path, yt_url, short_path = result, "", None
 
-                def _is_corrupt(text, lang_code):
-                    """Sarlavha buzilganmi: noto'g'ri alifbo yoki bo'sh."""
-                    if not text or len(text.strip()) < 5:
-                        return True
-                    alpha = [c for c in text if c.isalpha()]
-                    if not alpha:
-                        return True
-                    if lang_code in ("uz", "ru"):
-                        # Kirill majburiy: 15%+ lotin = buzilgan
-                        latin_n = sum(1 for c in alpha if c.isascii())
-                        if latin_n / len(alpha) > 0.15:
-                            return True
-                        cyr_n = sum(1 for c in alpha if c in _CYR_UZ)
-                        if cyr_n / len(alpha) < 0.60:
-                            return True
-                    elif lang_code == "en":
-                        # Inglizcha: kirill ko'p bo'lsa — buzilgan
-                        cyr_n = sum(1 for c in alpha if c in _CYR_UZ)
-                        if cyr_n / len(alpha) > 0.30:
-                            return True
-                    return False
+                if video_path:
+                    any_lang_ok = True
+                    digest_videos[lang] = video_path
+                    if yt_url:
+                        yt_urls[lang] = yt_url
+                    if short_path:
+                        short_videos[lang] = short_path
+                    log.info(f"  ✅ [{lang.upper()}] Digest tayyor: {video_path}")
+                else:
+                    log.warning(f"  ⚠️  [{lang.upper()}] Digest yaratilmadi")
+            except Exception as e:
+                log.error(f"  [{lang.upper()}] Digest xato: {e}", exc_info=True)
 
-                for fix_lang in ("uz", "ru", "en"):
-                    val = sarlavhalar.get(fix_lang, "")
-                    if not _is_corrupt(val, fix_lang):
-                        continue  # Yaxshi — o'tkazib yuborish
-                    # EN: agar asl sarlavha o'zi inglizcha bo'lsa — uni ishlatish
-                    if fix_lang == "en" and title and not _is_corrupt(title, "en"):
-                        log.info(f"  ℹ️  EN sarlavha buzilgan, asl sarlavhani ishlatmoqda: '{title[:50]}'")
-                        sarlavhalar["en"] = title[:100]
-                        continue
-                    log.warning(f"  🔧 {fix_lang.upper()} sarlavha buzilgan: '{val[:50]}' — qayta tarjima...")
-                    fixed = _fix_title_only(title, fix_lang)
-                    if fixed and not _is_corrupt(fixed, fix_lang):
-                        sarlavhalar[fix_lang] = fixed
-                        log.info(f"  ✓ {fix_lang.upper()} tuzatildi: '{fixed[:50]}'")
-                    else:
-                        log.warning(f"  ✗ {fix_lang.upper()} tuzatilmadi — bo'sh qoldirildi")
-                        sarlavhalar[fix_lang] = ""
+        # ── INSTAGRAM postlash (barcha tillar tugagandan keyin) ─
+        # Facebook postlash digest_maker.py ichida Telegram bilan birga bajariladi
+        # (UZ va RU uchun)
+        if any_lang_ok and short_videos:
+            try:
+                from social_poster import post_instagram_reel_best_lang
+                # Instagram Reels → short (9:16)
+                log.info("  📸 Instagram Reels postlash...")
+                ig_id = post_instagram_reel_best_lang(
+                    videos      = short_videos,
+                    sarlavhalar = sarlavhalar,
+                    daraja      = daraja_main,
+                    location    = location_map,
+                )
+                if ig_id:
+                    log.info(f"  ✅ Instagram Reel: {ig_id}")
+            except Exception as _soc_e:
+                log.warning(f"  ⚠️  Instagram post xato: {_soc_e}")
 
-                # UZ joy nomlarini tuzatish
-                uz_s = sarlavhalar.get("uz", "")
-                if uz_s:
-                    sarlavhalar["uz"] = _apply_uz_places(uz_s)
-
-            except Exception as _e:
-                log.debug(f"Sarlavha tuzatish xato: {_e}")
-
-            # jumla — tavsif uchun (script emas, intro yo'q)
-            jumlalar = data.get("jumla", {})
-
-            any_success = False
-            for lang in ["en", "ru", "uz"]:
-                sarlavha = sarlavhalar.get(lang, "")
-
-                # ── Sarlavha majburiy tekshiruv ───────────────
-                if not _title_ok(sarlavha, lang):
-                    log.warning(f"  ⚠️  {lang.upper()} sarlavha yaroqsiz: '{sarlavha[:60]}' — tuzatilmoqda...")
-                    sarlavha = _repair_title(sarlavha, title, lang)
-                    # Hali ham yomon bo'lsa — bu tilni o'tkazib yuborish
-                    if not _title_ok(sarlavha, lang):
-                        log.warning(f"  ⛔ {lang.upper()} sarlavha tuzatilmadi — o'tkazildi")
-                        continue
-
-                # YouTube tavsifi: jumla (intro yo'q) yoki article description
-                jumla_desc = jumlalar.get(lang, "")
-                if not jumla_desc:
-                    # Eski queue fayllar uchun: scriptdan intro tozalab olish
-                    raw_script = scripts.get(lang, "")
-                    # Oddiy regex bilan intro tozalash (youtube_maker import qilmasdan)
-                    import re as _re
-                    raw_script = _re.sub(
-                        r"^(Efirda\s+1KUN\s+Global\.?|В\s+эфире\s+1ДЕНЬ\s+Global\.?|This\s+is\s+1DAY\s+Global\.?)\s*",
-                        "", raw_script, flags=_re.IGNORECASE).strip()
-                    jumla_desc = raw_script[:300]
-
-                video_data = {
-                    "lang":                lang,
-                    "sarlavha":            sarlavha,
-                    "youtube_script_latin": scripts.get(lang, ""),
-                    "location":            location.get(lang, ""),
-                    "daraja":              daraja,
-                    "article_url":         article_url,
-                    "keywords_en":         combined_kw,
-                    "search_queries":      combined_kw,
-                    "yt_clips":            yt_clips,
-                    "jumla1":              jumla_desc,
-                    "jumla2":              "",   # jumla_desc ichida bor
-                    "hook":                data.get("hook", {}),
-                    "hashtaglar":          data.get("sarlavha", {}).get(lang, ""),
-                }
-                log.info(f"  🎬 {lang.upper()} video: '{sarlavha[:55]}'")
-                result = youtube_pipeline(video_data)
-                if result:
-                    any_success = True
-
-            if not any_success:
-                log.warning("  ⚠️  Hech bir video yaratilmadi — error ga o'tkazildi")
-                error_path = qfile.replace(".json", "_error.json")
-                if os.path.exists(error_path):
-                    os.remove(error_path)
-                os.rename(qfile, error_path)
-                continue
-
-            # ── Ko'rilganlarga qo'shish ───────────────────────
-            if article_url:
-                seen.add(article_url)
-                save_seen(seen)
-
-            # ── Arxivga ko'chirish ────────────────────────────
-            done_dir = f"{QUEUE_DIR}/done"
-            os.makedirs(done_dir, exist_ok=True)
-            os.rename(qfile, f"{done_dir}/{os.path.basename(qfile)}")
-            log.info("✅ Video tayyor\n")
-
-        except Exception as e:
-            log.error(f"Video xato: {e}", exc_info=True)
-            if os.path.exists(qfile):
-                error_path = qfile.replace(".json", "_error.json")
-                try:
+        # ── Fayllarni arxivlash ───────────────────────────────
+        for raw in batch:
+            qfile       = raw["qfile"]
+            article_url = raw["article_url"]
+            try:
+                if any_lang_ok:
+                    if article_url:
+                        seen.add(article_url)
+                    os.rename(qfile, f"{done_dir}/{os.path.basename(qfile)}")
+                else:
+                    error_path = qfile.replace(".json", "_error.json")
                     if os.path.exists(error_path):
                         os.remove(error_path)
                     os.rename(qfile, error_path)
-                except Exception:
-                    pass
+            except Exception as _e:
+                log.debug(f"Fayl ko'chirish xato: {_e}")
+
+        if any_lang_ok and seen:
+            save_seen(seen)
+
+        log.info("")
+
+
+def run_daily_shorts_all():
+    """
+    Barcha 3 tilda (uz, ru, en) Daily Shorts yaratish va YouTube ga yuklash.
+    Bu funksiya APScheduler tomonidan kuniga 4 mahal chaqiriladi.
+    """
+    log.info("📰 Daily Shorts (uz/ru/en) ishga tushdi...")
+    try:
+        sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+        from daily_shorts import make_daily_shorts
+        for lg in ["uz", "ru", "en"]:
+            try:
+                log.info(f"  → Daily Shorts ({lg.upper()}) yaratilmoqda...")
+                result = make_daily_shorts(lg)
+                if result:
+                    log.info(f"  ✅ Daily Shorts ({lg.upper()}) tayyor: {result}")
+                else:
+                    log.warning(f"  ⚠️  Daily Shorts ({lg.upper()}) yaratilmadi")
+            except Exception as e:
+                log.error(f"  Daily Shorts ({lg.upper()}) xato: {e}", exc_info=True)
+    except ImportError as e:
+        log.error(f"  daily_shorts import xato: {e}")
+
+
+def run_analysis_all():
+    """
+    Navbatdagi so'nggi DIGEST_BATCH ta yangilikdan tahlil video yaratish.
+    Kunda 3 marta chaqiriladi (08:00, 14:00, 20:00 Toshkent).
+    Tahlil video = uzunroq naratsiya + 2 rasm/yangilik + ob-havo ticker + timestamps.
+    """
+    log.info("🎙 Tahlil pipeline (uz/ru/en) ishga tushdi...")
+    from analysis_maker import analysis_pipeline
+
+    seen = load_seen()
+    done_dir = f"{QUEUE_DIR}/done"
+
+    # Queue + done papkalardan so'nggi DIGEST_BATCH ta fayl (modified time bo'yicha)
+    queue_files = [
+        f for f in glob.glob(f"{QUEUE_DIR}/*.json")
+        if not any(f.endswith(suf) for suf in _STATUS_SUFFIXES)
+    ]
+    done_files  = glob.glob(f"{done_dir}/*.json")
+    all_cands   = sorted(
+        queue_files + done_files,
+        key=os.path.getmtime, reverse=True
+    )
+    recent_files = all_cands[:DIGEST_BATCH]
+
+    if not recent_files:
+        log.info("Tahlil uchun yangilik yo'q")
+        return
+
+    log.info(f"  Tahlil uchun {len(recent_files)} ta yangilik")
+
+    parsed = []
+    for qfile in recent_files:
+        try:
+            with open(qfile, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            article = data.get("article", {})
+            url     = article.get("link", "")
+            title   = article.get("title", "")
+            if url and is_russian_source(url):
+                continue
+
+            scripts     = data.get("scripts", {})
+            sarlavhalar = data.get("sarlavha", {})
+            keywords_en = data.get("keywords_en", [])
+            location    = data.get("location", {})
+            daraja      = data.get("daraja", "xabar")
+            jumlalar    = data.get("jumla", {})
+            en_title    = sarlavhalar.get("en") or title
+
+            parsed.append({
+                "title": title, "en_title": en_title,
+                "sarlavhalar": sarlavhalar,
+                "scripts": scripts, "jumlalar": jumlalar,
+                "location": location, "daraja": daraja,
+                "article_url": url, "keywords_en": keywords_en,
+            })
+        except Exception as e:
+            log.debug(f"Parse xato {qfile}: {e}")
+
+    if not parsed:
+        log.info("  Yaroqli yangilik yo'q")
+        return
+
+    def _is_cyr_text(text: str, threshold: float = 0.35) -> bool:
+        """Matn kamida threshold% Kirill harfdan iboratmi?"""
+        alpha = [c for c in text if c.isalpha()]
+        if not alpha:
+            return False
+        return sum(1 for c in alpha if c in _CYR) / len(alpha) >= threshold
+
+    def _clean_field(text: str, lang: str) -> str:
+        """RU/UZ uchun inglizcha matnni o'tkazib yuborish."""
+        if not text or not text.strip():
+            return ""
+        if lang in ("uz", "ru") and not _is_cyr_text(text):
+            return ""   # Inglizcha matn — bo'sh qaytarish
+        return text.strip()
+
+    for lang in ["uz", "ru", "en"]:
+        items = []
+        for raw in parsed:
+            raw_sarlavha = raw["sarlavhalar"].get(lang, "")
+            sarlavha = _clean_field(raw_sarlavha, lang)
+            # EN uchun inglizcha fallback OK — RU/UZ uchun EMAS
+            if not sarlavha and lang == "en":
+                sarlavha = raw.get("title", "")
+
+            # ── Script olish ──────────────────────────────────────
+            # UZ: script LOTIN (TTS uchun) — Kirill tekshiruvi KERAK EMAS
+            # RU: script Kirill bo'lishi kerak (_clean_field)
+            # EN: script inglizcha — Kirill tekshiruvi KERAK EMAS
+            raw_script = raw["scripts"].get(lang, "").strip()
+            if lang == "uz":
+                # UZ Latin skriptini to'g'ridan filtrsiz olish
+                script = raw_script
+            elif lang == "en":
+                # EN: script bo'sh bo'lsa — article description ni ishlatish
+                script = raw_script or raw.get("article", {}).get("description", "")
+                script = script.strip()
+            else:
+                # RU: Kirill tekshiruvi (inglizcha content kirmasin)
+                script = _clean_field(raw_script, lang)
+
+            jumla_raw = raw["jumlalar"].get(lang, "")
+            jumla1 = _clean_field(jumla_raw, lang) or (script[:200] if script else "")
+
+            if not sarlavha or len(sarlavha.strip()) < 5:
+                continue
+            items.append({
+                "sarlavha":    sarlavha,
+                "jumla1":      jumla1,
+                "script":      script,
+                "location":    raw["location"].get(lang, ""),
+                "daraja":      raw["daraja"],
+                "article_url": raw["article_url"],
+                "en_title":    raw["en_title"],
+                "keywords_en": raw["keywords_en"],
+            })
+
+        if len(items) < 2:
+            log.warning(f"  [{lang.upper()}] Yetarli tahlil matni yo'q ({len(items)} ta)")
+            continue
+
+        log.info(f"  [{lang.upper()}] {len(items)} ta yangilik tahlil qilinmoqda...")
+        try:
+            result = analysis_pipeline(items, lang)
+            # analysis_pipeline endi (video_path, yt_url) qaytaradi
+            if isinstance(result, tuple):
+                video_path, yt_url = result
+            else:
+                video_path, yt_url = result, ""
+
+            if video_path:
+                log.info(f"  ✅ [{lang.upper()}] Tahlil tayyor: {video_path}")
+
+                # ── Faqat Facebook YT link post (Telegram YO'Q) ──
+                if yt_url:
+                    try:
+                        from social_poster import post_facebook_yt_link
+                        top_sarlavha = items[0].get("sarlavha", "")
+                        top_jumla    = items[0].get("jumla1",   "")
+                        top_loc      = items[0].get("location",  "")
+                        daraja_val   = items[0].get("daraja", "xabar")
+
+                        fb_ok = post_facebook_yt_link(
+                            yt_url      = yt_url,
+                            title       = top_sarlavha,
+                            description = top_jumla,
+                            lang        = lang,
+                            daraja      = daraja_val,
+                            location    = top_loc,
+                        )
+                        log.info(f"  {'✅' if fb_ok else '⚠️ '} Facebook Tahlil [{lang.upper()}]")
+                    except Exception as _sp_e:
+                        log.error(f"  Tahlil social post xato [{lang.upper()}]: {_sp_e}", exc_info=True)
+            else:
+                log.warning(f"  ⚠️  [{lang.upper()}] Tahlil yaratilmadi")
+        except Exception as e:
+            log.error(f"  [{lang.upper()}] Tahlil xato: {e}", exc_info=True)
 
 
 def main():
     log.info("🎬 YouTube pipeline ishga tushdi")
 
-    if "--now" in sys.argv:
+    if "--now" in sys.argv or "--once" in sys.argv:
         process_queue()
+        return
+
+    if "--shorts" in sys.argv:
+        run_daily_shorts_all()
+        return
+
+    if "--analysis" in sys.argv:
+        run_analysis_all()
         return
 
     from apscheduler.schedulers.blocking import BlockingScheduler
     from apscheduler.triggers.interval import IntervalTrigger
+    from apscheduler.triggers.cron import CronTrigger
 
     scheduler = BlockingScheduler(timezone=TASHKENT)
+
+    # ── YouTube video queue — har 30 daqiqada ─────────────────
     scheduler.add_job(
         process_queue,
         IntervalTrigger(minutes=30),
         id="youtube_queue",
         misfire_grace_time=300,
     )
+
+    # ── Daily Shorts — kuniga 12 mahal (har toq soatda) ───────
+    # 01,03,05,07,09,11,13,15,17,19,21,23 (Toshkent)
+    shorts_hours = [1, 3, 5, 7, 9, 11, 13, 15, 17, 19, 21, 23]
+    for shot_id, hour in enumerate(shorts_hours, start=1):
+        scheduler.add_job(
+            run_daily_shorts_all,
+            CronTrigger(hour=hour, minute=30, timezone=TASHKENT),
+            id=f"daily_shorts_{shot_id}",
+            misfire_grace_time=600,
+        )
+    log.info(f"⏰ Daily Shorts: {', '.join(f'{h:02d}:30' for h in shorts_hours)} (Toshkent) — 12/kun")
+
+    # ── Tahlil video — kuniga 1 marta (20:00 Toshkent) ──────────
+    scheduler.add_job(
+        run_analysis_all,
+        CronTrigger(hour=20, minute=0, timezone=TASHKENT),
+        id="analysis_daily",
+        misfire_grace_time=600,
+    )
+    log.info("⏰ Tahlil (kunlik digest): 20:00 (Toshkent) — 1/kun")
+
     log.info("⏰ Har 30 daqiqada navbat tekshiriladi")
     log.info("Ctrl+C — to'xtatish\n")
     process_queue()

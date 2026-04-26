@@ -16,7 +16,7 @@ TELEGRAM_CHANNEL_EN = os.getenv("TELEGRAM_CHANNEL_EN", "@birkunday_en")
 
 # Vaqt va jadval
 TASHKENT       = pytz.timezone("Asia/Tashkent")
-SCHEDULE_HOURS = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
+SCHEDULE_HOURS = [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23]
 
 # Papkalar
 os.makedirs("output", exist_ok=True)
