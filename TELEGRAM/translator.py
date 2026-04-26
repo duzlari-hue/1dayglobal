@@ -833,4 +833,76 @@ RULES:
         if n:
             log.info(f"Libya fix: Ливан->Ливия, Livan->Liviya ({n} maydon)")
 
+    # ══════════════════════════════════════════════════════════
+    # jumla1 / jumla2 bo'sh bo'lsa — script dan yoki description dan to'ldirish
+    # ══════════════════════════════════════════════════════════
+    _desc_clean = (description or "").strip()
+
+    for _lang in ("uz", "ru", "en"):
+        _j1_k  = f"jumla1_{_lang}"
+        _j2_k  = f"jumla2_{_lang}"
+        _sc_k  = f"script_{_lang}"
+        _sv_k  = f"sarlavha_{_lang}"
+
+        j1  = data.get(_j1_k, "").strip()
+        j2  = data.get(_j2_k, "").strip()
+        sv  = data.get(_sv_k, "").strip()
+        sc  = data.get(_sc_k, "").strip()
+
+        # ─── jumla1 to'ldirish ───────────────────────────────
+        if not j1 or j1 == sv:
+            # 1-usul: script dan birinchi 70 so'z
+            if sc and len(sc.split()) >= 15:
+                words   = sc.split()
+                part    = " ".join(words[:70])
+                if _lang == "uz" and not _is_mostly_cyr(part) and _is_uzbek_latin(part):
+                    part = lat2cyr(part)
+                # So'nggi yarim jumlani kes (nuqta yoki undov bilan tugasin)
+                for sep in (". ", "! ", "? "):
+                    last = part.rfind(sep)
+                    if last > len(part) // 2:
+                        part = part[:last + 1].strip()
+                        break
+                if _lang == "uz" and _is_mostly_cyr(part):
+                    data[_j1_k] = part
+                    log.debug(f"jumla1_uz script dan to'ldirildi")
+                elif _lang == "ru" and any(c in part for c in "абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ"):
+                    data[_j1_k] = part
+                    log.debug(f"jumla1_ru script dan to'ldirildi")
+                elif _lang == "en":
+                    data[_j1_k] = part
+                    log.debug(f"jumla1_en script dan to'ldirildi")
+
+        # 2-usul (EN va RU uchun): article description'dan
+        j1 = data.get(_j1_k, "").strip()
+        if not j1 or j1 == sv:
+            if _lang == "en":
+                if _desc_clean and _desc_clean.strip() != title.strip():
+                    data[_j1_k] = _desc_clean[:500]
+                else:
+                    # Description = title bo'lsa — sarlavhani takrorlamaslik
+                    data[_j1_k] = ""
+
+        # ─── jumla2 to'ldirish (jumla1 dan ikkinchi qism) ────
+        j1 = data.get(_j1_k, "").strip()
+        j2 = data.get(_j2_k, "").strip()
+        if j1 and not j2 and sc and len(sc.split()) >= 80:
+            # Script dan ikkinchi yarmi
+            words = sc.split()
+            half  = len(words) // 2
+            part2 = " ".join(words[half: half + 60])
+            if _lang == "uz" and not _is_mostly_cyr(part2) and _is_uzbek_latin(part2):
+                part2 = lat2cyr(part2)
+            for sep in (". ", "! ", "? "):
+                last = part2.rfind(sep)
+                if last > len(part2) // 2:
+                    part2 = part2[:last + 1].strip()
+                    break
+            if _lang == "uz" and _is_mostly_cyr(part2):
+                data[_j2_k] = part2
+            elif _lang == "ru" and any(c in part2 for c in "абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ"):
+                data[_j2_k] = part2
+            elif _lang == "en":
+                data[_j2_k] = part2
+
     return data

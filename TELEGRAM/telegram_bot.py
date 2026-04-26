@@ -33,11 +33,17 @@ def make_post(sarlavha, jumla1, jumla2, daraja, hashtaglar, location, lang="uz")
 
     post  = belgi + "\n\n"
     # Sarlavha faqat mavjud va yetarli uzunlikda bo'lsa qo'shiladi
-    if sarlavha and len(sarlavha.strip()) >= 8:
-        post += f"⚡ <b>{sarlavha.strip()}</b>\n\n"
-    post += f"{j1e} {jumla1}\n\n"
-    if jumla2:
-        post += f"{j2e} {jumla2}\n\n"
+    _sv = sarlavha.strip() if sarlavha else ""
+    if _sv and len(_sv) >= 8:
+        post += f"⚡ <b>{_sv}</b>\n\n"
+    # jumla1: bo'sh bo'lsa yoki sarlavha bilan bir xil bo'lsa — ko'rsatmaymiz
+    _j1 = jumla1.strip() if jumla1 else ""
+    if _j1 and _j1 != _sv:
+        post += f"{j1e} {_j1}\n\n"
+    # jumla2
+    _j2 = jumla2.strip() if jumla2 else ""
+    if _j2 and _j2 != _j1 and _j2 != _sv:
+        post += f"{j2e} {_j2}\n\n"
     if location:
         post += f"📍 {location}\n"
     post += vaqt + "\n"
