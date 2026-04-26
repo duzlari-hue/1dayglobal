@@ -15,6 +15,7 @@ except Exception:
 
 GEMINI_API_KEY     = os.getenv("GEMINI_API_KEY", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")  # openrouter.ai (fallback)
+ANTHROPIC_API_KEY  = os.getenv("ANTHROPIC_API_KEY", "")   # api.anthropic.com (asosiy fallback)
 
 log = logging.getLogger(__name__)
 
@@ -462,22 +463,64 @@ def _ask_openrouter(prompt, max_tokens=2500) -> str:
     raise Exception("OpenRouter barcha modellar muvaffaqiyatsiz: " + " | ".join(errors))
 
 
+def _ask_anthropic(prompt, max_tokens=2500) -> str:
+    """Anthropic API — to'g'ridan-to'g'ri Claude (OpenRouter'siz, ishonchli).
+    Model: claude-3-haiku-20240307 (arzon, tez, yuqori sifat)
+    """
+    if not ANTHROPIC_API_KEY:
+        raise Exception("ANTHROPIC_API_KEY yo'q")
+    r = requests.post(
+        "https://api.anthropic.com/v1/messages",
+        headers={
+            "x-api-key":         ANTHROPIC_API_KEY,
+            "anthropic-version": "2023-06-01",
+            "content-type":      "application/json",
+        },
+        json={
+            "model":      "claude-3-haiku-20240307",
+            "max_tokens": min(max_tokens, 2048),
+            "messages":   [{"role": "user", "content": prompt}],
+        },
+        timeout=90,
+    )
+    if r.status_code == 429:
+        log.warning("Anthropic rate limit — 30s kutilmoqda...")
+        time.sleep(30)
+        raise Exception("Anthropic 429: rate limit")
+    if r.status_code in (401, 403):
+        raise Exception(f"Anthropic API key xato: {r.status_code}")
+    if r.status_code == 400:
+        raise Exception(f"Anthropic 400: {r.text[:120]}")
+    r.raise_for_status()
+    result = r.json()["content"][0]["text"].strip()
+    log.info("  ✅ Anthropic claude-3-haiku")
+    return result
+
+
 def groq_ask(prompt, max_tokens=2500, retries=2):
-    """Tarjimon zanjiri: 1.Gemini (2 urinish, ~45s) → 2.OpenRouter (claude-3-5-haiku)"""
+    """Tarjimon zanjiri: 1.Gemini (2 urinish, ~45s) → 2.Anthropic Claude → 3.OpenRouter"""
     errors = []
 
     # ── 1. Gemini 2.0 Flash (asosiy, bepul) ─────────────────
-    # 6 marta urinadi: 30s, 60s, 90s, 120s, 150s, 180s kutadi
     if GEMINI_API_KEY:
         try:
             return _ask_gemini(prompt, max_tokens, retries)
         except Exception as e:
-            log.warning(f"Gemini muvaffaqiyatsiz → OpenRouter ga o'tilmoqda: {e}")
+            log.warning(f"Gemini → Anthropic ga o'tilmoqda: {e}")
             errors.append(f"Gemini: {e}")
 
-    # ── 2. OpenRouter — claude-3-5-haiku (yuqori sifat) ─────
+    # ── 2. Anthropic Claude (to'g'ridan-to'g'ri API, ishonchli) ──
+    if ANTHROPIC_API_KEY:
+        log.info("  ↩️  Anthropic claude-3-haiku...")
+        try:
+            return _ask_anthropic(prompt, max_tokens)
+        except Exception as e:
+            log.warning(f"Anthropic → OpenRouter ga o'tilmoqda: {e}")
+            errors.append(f"Anthropic: {e}")
+
+    # ── 3. OpenRouter (zaxira) ───────────────────────────────
     if OPENROUTER_API_KEY:
-        log.info("  ↩️  OpenRouter (claude-3-5-haiku)...")
+        log.info("  ↩️  OpenRouter (zaxira)...")
         try:
             return _ask_openrouter(prompt, max_tokens)
         except Exception as e:
