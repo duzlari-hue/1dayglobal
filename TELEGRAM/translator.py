@@ -635,11 +635,13 @@ CRITICAL: sarlavha_uz, jumla1_uz, jumla2_uz — FAQAT O'ZBEK KIRILLI (а,б,в,�
 CRITICAL: sarlavha_ru, jumla1_ru, jumla2_ru — FAQAT RUSCHA (а,б,в,г,д...). Inglizcha YOZMA!"""
 
     # ── 1. Gemini — to'liq prompt (skript, shot_list bilan) ─────────────
-    data = None
+    data     = None
+    _gem_err = None   # Python 3: except clause var deleted after block — save separately
     try:
         data = parse_json(_ask_gemini(prompt, max_tokens=3000, retries=2))
-    except Exception as e_gem:
-        log.warning(f"Gemini muvaffaqiyatsiz → OpenRouter qisqa so'rov: {e_gem}")
+    except Exception as _e:
+        _gem_err = _e
+        log.warning(f"Gemini muvaffaqiyatsiz → OpenRouter qisqa so'rov: {_gem_err}")
 
     # ── 2. OpenRouter — qisqa prompt (skriptsiz, max 700 token) ─────────
     if data is None:
@@ -654,7 +656,7 @@ CRITICAL: sarlavha_ru, jumla1_ru, jumla2_ru — FAQAT RUSCHA (а,б,в,г,д...)
             data.setdefault("search_queries", [])
             log.info("✅ OpenRouter qisqa so'rov muvaffaqiyatli")
         except Exception as e_or:
-            log.warning(f"Tarjima xato (barcha servislar): Gemini: {e_gem} | OpenRouter: {e_or}")
+            log.warning(f"Tarjima xato (barcha servislar): Gemini: {_gem_err} | OpenRouter: {e_or}")
             # Fallback: UZ/RU bo'sh (placeholder emas!), EN — orijinal matn
             _en_script = (description or title or "").strip()
             _en_j1     = _en_script[:600] if _en_script else title
