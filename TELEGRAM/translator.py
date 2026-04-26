@@ -351,9 +351,9 @@ _GEMINI_URL   = f"https://generativelanguage.googleapis.com/v1beta/models/{_GEMI
 # Yordamchi funksiyalar — har bir API servisi
 # ══════════════════════════════════════════════════════════════
 
-def _ask_gemini(prompt, max_tokens=2500, retries=3) -> str:
+def _ask_gemini(prompt, max_tokens=2500, retries=2) -> str:
     """Gemini 2.0 Flash — asosiy tarjimon (bepul, 15 RPM).
-    429 limitda: 20s, 40s, 60s kutadi — jami max ~2 daqiqa."""
+    429 limitda: 15s, 30s kutadi — jami max ~45s, keyin OpenRouter."""
     body = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"temperature": 0.3, "maxOutputTokens": max_tokens},
@@ -364,10 +364,10 @@ def _ask_gemini(prompt, max_tokens=2500, retries=3) -> str:
                 _GEMINI_URL,
                 params={"key": GEMINI_API_KEY},
                 headers={"Content-Type": "application/json"},
-                json=body, timeout=90,
+                json=body, timeout=60,
             )
             if r.status_code == 429:
-                wait = 20 * (attempt + 1)   # 20s, 40s, 60s
+                wait = 15 * (attempt + 1)   # 15s, 30s
                 log.warning(f"Gemini limit — {wait}s kutilmoqda (urinish {attempt+1}/{retries})...")
                 time.sleep(wait)
                 continue
@@ -382,7 +382,7 @@ def _ask_gemini(prompt, max_tokens=2500, retries=3) -> str:
                 raise
             if attempt < retries - 1:
                 log.warning(f"Gemini urinish {attempt+1}/{retries}: {e}")
-                time.sleep(8)
+                time.sleep(5)
             else:
                 raise Exception(f"Gemini {retries} urinishdan keyin xato: {e}")
     raise Exception("Gemini: barcha urinishlar muvaffaqiyatsiz")
@@ -428,8 +428,8 @@ def _ask_openrouter(prompt, max_tokens=2500) -> str:
     raise Exception("OpenRouter: barcha urinishlar muvaffaqiyatsiz")
 
 
-def groq_ask(prompt, max_tokens=2500, retries=3):
-    """Tarjimon zanjiri: 1.Gemini (3 urinish, ~2 daqiqa) → 2.OpenRouter (claude-3-5-haiku)"""
+def groq_ask(prompt, max_tokens=2500, retries=2):
+    """Tarjimon zanjiri: 1.Gemini (2 urinish, ~45s) → 2.OpenRouter (claude-3-5-haiku)"""
     errors = []
 
     # ── 1. Gemini 2.0 Flash (asosiy, bepul) ─────────────────
