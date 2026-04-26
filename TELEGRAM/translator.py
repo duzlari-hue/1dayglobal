@@ -351,9 +351,9 @@ _GEMINI_URL   = f"https://generativelanguage.googleapis.com/v1beta/models/{_GEMI
 # Yordamchi funksiyalar — har bir API servisi
 # ══════════════════════════════════════════════════════════════
 
-def _ask_gemini(prompt, max_tokens=2500, retries=6) -> str:
+def _ask_gemini(prompt, max_tokens=2500, retries=3) -> str:
     """Gemini 2.0 Flash — asosiy tarjimon (bepul, 15 RPM).
-    429 limitda ko'proq sabr qilib qayta urinadi."""
+    429 limitda: 20s, 40s, 60s kutadi — jami max ~2 daqiqa."""
     body = {
         "contents": [{"parts": [{"text": prompt}]}],
         "generationConfig": {"temperature": 0.3, "maxOutputTokens": max_tokens},
@@ -367,7 +367,7 @@ def _ask_gemini(prompt, max_tokens=2500, retries=6) -> str:
                 json=body, timeout=90,
             )
             if r.status_code == 429:
-                wait = 30 * (attempt + 1)   # 30s, 60s, 90s, 120s, 150s, 180s
+                wait = 20 * (attempt + 1)   # 20s, 40s, 60s
                 log.warning(f"Gemini limit — {wait}s kutilmoqda (urinish {attempt+1}/{retries})...")
                 time.sleep(wait)
                 continue
@@ -382,7 +382,7 @@ def _ask_gemini(prompt, max_tokens=2500, retries=6) -> str:
                 raise
             if attempt < retries - 1:
                 log.warning(f"Gemini urinish {attempt+1}/{retries}: {e}")
-                time.sleep(10)
+                time.sleep(8)
             else:
                 raise Exception(f"Gemini {retries} urinishdan keyin xato: {e}")
     raise Exception("Gemini: barcha urinishlar muvaffaqiyatsiz")
@@ -428,8 +428,8 @@ def _ask_openrouter(prompt, max_tokens=2500) -> str:
     raise Exception("OpenRouter: barcha urinishlar muvaffaqiyatsiz")
 
 
-def groq_ask(prompt, max_tokens=2500, retries=6):
-    """Tarjimon zanjiri: 1.Gemini (6 urinish, uzun sabr) → 2.OpenRouter (claude-3-5-haiku)"""
+def groq_ask(prompt, max_tokens=2500, retries=3):
+    """Tarjimon zanjiri: 1.Gemini (3 urinish, ~2 daqiqa) → 2.OpenRouter (claude-3-5-haiku)"""
     errors = []
 
     # ── 1. Gemini 2.0 Flash (asosiy, bepul) ─────────────────
