@@ -1,5 +1,7 @@
 """telegram_bot.py — Telegram post yuborish"""
 import re
+import os
+import random
 import requests
 import logging
 from datetime import datetime
@@ -70,6 +72,137 @@ def send_telegram(caption, channel):
     return ok
 
 
+def _fetch_og_image(article_url: str, out_path: str) -> bool:
+    """Maqola sahifasidan og:image meta-tegini olish."""
+    if not article_url or not article_url.startswith("http"):
+        return False
+    try:
+        hdrs = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+        resp = requests.get(article_url, headers=hdrs, timeout=10, allow_redirects=True)
+        if resp.status_code != 200:
+            return False
+        for pat in [
+            r'<meta[^>]+property=["\']og:image["\'][^>]+content=["\']([^"\']+)["\']',
+            r'<meta[^>]+content=["\']([^"\']+)["\'][^>]+property=["\']og:image["\']',
+            r'<meta[^>]+name=["\']twitter:image["\'][^>]+content=["\']([^"\']+)["\']',
+        ]:
+            m = re.search(pat, resp.text, re.IGNORECASE)
+            if m:
+                img_url = m.group(1).strip()
+                if img_url.startswith("http"):
+                    ir = requests.get(img_url, headers=hdrs, timeout=12)
+                    if ir.status_code == 200 and len(ir.content) >= 10_000:
+                        with open(out_path, "wb") as fh:
+                            fh.write(ir.content)
+                        return True
+    except Exception:
+        pass
+    return False
+
+
+_PEXELS_SEEN = set()
+
+def _fetch_pexels(query: str, out_path: str) -> bool:
+    """Pexels orqali rasm qidirish."""
+    api_key = os.getenv("PEXELS_API_KEY", "")
+    if not api_key or not query.strip():
+        return False
+    if not all(c.isascii() or not c.isalpha() for c in query):
+        return False
+    try:
+        hdrs = {"Authorization": api_key}
+        url  = (f"https://api.pexels.com/v1/search"
+                f"?query={requests.utils.quote(query[:80])}"
+                f"&per_page=15&orientation=landscape")
+        resp = requests.get(url, headers=hdrs, timeout=10)
+        if resp.status_code != 200:
+            return False
+        photos = resp.json().get("photos", [])
+        random.shuffle(photos)
+        for ph in photos:
+            ph_id = ph.get("id")
+            if ph_id in _PEXELS_SEEN:
+                continue
+            _PEXELS_SEEN.add(ph_id)
+            src = ph.get("src", {})
+            img_url = src.get("large2x") or src.get("large") or src.get("medium", "")
+            if not img_url:
+                continue
+            ir = requests.get(img_url, timeout=15)
+            if ir.status_code == 200 and len(ir.content) >= 20_000:
+                with open(out_path, "wb") as f:
+                    f.write(ir.content)
+                return True
+    except Exception:
+        pass
+    return False
+
+
+def _find_article_photo(article: dict, keywords_en: list, tmp_prefix: str) -> str | None:
+    """Yangilik uchun rasm topish: og:image → Pexels. None = topilmadi."""
+    import tempfile, pathlib
+    tmp_dir = pathlib.Path(tempfile.gettempdir())
+
+    # 1. og:image maqola sahifasidan
+    og_path = str(tmp_dir / f"{tmp_prefix}_og.jpg")
+    if _fetch_og_image(article.get("link", ""), og_path):
+        log.info("  📷 og:image topildi")
+        return og_path
+
+    # 2. Pexels — keywords_en bilan qidirish
+    queries = []
+    if keywords_en:
+        queries.append(" ".join(keywords_en[:3]))
+    title = article.get("title", "")
+    if title:
+        # Birinchi 3-5 ta so'z
+        words = [w for w in title.split() if len(w) > 3][:4]
+        if words:
+            queries.append(" ".join(words))
+    for q in queries:
+        px_path = str(tmp_dir / f"{tmp_prefix}_px.jpg")
+        if _fetch_pexels(q, px_path):
+            log.info(f"  📷 Pexels: '{q[:40]}'")
+            return px_path
+
+    log.info("  📷 Rasm topilmadi — rasmsiz yuboriladi")
+    return None
+
+
+def send_telegram_photo(caption: str, photo_path: str, channel: str) -> bool:
+    """Rasmli Telegram post yuborish."""
+    base = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}"
+    try:
+        with open(photo_path, "rb") as f:
+            r = requests.post(
+                f"{base}/sendPhoto",
+                data={
+                    "chat_id":    channel,
+                    "caption":    caption[:1024],
+                    "parse_mode": "HTML",
+                },
+                files={"photo": f},
+                timeout=30,
+            )
+        ok = r.json().get("ok", False)
+        if not ok:
+            log.warning(f"sendPhoto xato ({channel}): {r.json().get('description', '')}")
+        return ok
+    except Exception as e:
+        log.warning(f"sendPhoto exception ({channel}): {e}")
+        return False
+
+
+def _send_with_photo(caption: str, channel: str, photo_path: str | None) -> bool:
+    """Rasm bo'lsa sendPhoto, yo'qsa sendMessage."""
+    if photo_path:
+        ok = send_telegram_photo(caption, photo_path, channel)
+        if ok:
+            return True
+        log.warning("  sendPhoto muvaffaqiyatsiz — matn bilan qayta urinish")
+    return send_telegram(caption, channel)
+
+
 def _ensure_cyr(text: str) -> str:
     """Matn asosan lotin yozuvida bo'lsa — kirillga o'girish.
     Inglizcha matn lat2cyr qilinmaydi (Трумп агаин фумес xatosi oldini olish)."""
@@ -95,32 +228,85 @@ def _ensure_cyr(text: str) -> str:
     return ""  # Bo'sh matn gibberish kiriллdan yaxshi
 
 
+def _has_body(jumla1: str, jumla2: str = "", min_chars: int = 60) -> bool:
+    """Post matni yetarli ekanligini tekshirish.
+    Kamida bitta jumla min_chars belgidan uzun bo'lishi kerak."""
+    j1 = (jumla1 or "").strip()
+    j2 = (jumla2 or "").strip()
+    return len(j1) >= min_chars or len(j2) >= min_chars
+
+
 def send_all_languages(d, article):
-    """Faqat INGLIZ kanalga yuborish (UZ/RU vaqtincha o'chirilgan)"""
+    """3 tilda (UZ/RU/EN) Telegram kanallariga post yuborish.
+    Matn (jumla1) bo'sh yoki juda qisqa (<60 harf) bo'lsa — post yuborilmaydi."""
+    import tempfile, pathlib
     daraja = d.get("daraja", "xabar")
 
-    # ⏸️  O'ZBEK → @birkunday  — vaqtincha o'chirilgan
-    log.info("⏸️  UZ kanal o'chirilgan (vaqtincha)")
+    # ── Rasm bir marta topib, 3 kanalga ishlatish ─────────────
+    _ts  = datetime.now().strftime("%Y%m%d_%H%M%S")
+    _kws = d.get("keywords_en", [])
+    photo_path = _find_article_photo(article, _kws, f"tg_{_ts}")
 
-    # ⏸️  RUS → @birkunday_ru  — vaqtincha o'chirilgan
-    log.info("⏸️  RU kanal o'chirilgan (vaqtincha)")
+    # ── O'ZBEK → @birkunday ───────────────────────────────────
+    _sarlavha_uz = _ensure_cyr(d.get("sarlavha_uz", ""))
+    _j1_uz       = _ensure_cyr(d.get("jumla1_uz", ""))
+    _j2_uz       = _ensure_cyr(d.get("jumla2_uz", ""))
+    if not _sarlavha_uz:
+        log.warning("⚠️  sarlavha_uz bo'sh — UZ post o'tkazildi")
+    elif not _has_body(_j1_uz, _j2_uz):
+        log.warning(f"⚠️  UZ matn juda qisqa ({len(_j1_uz)} harf) — UZ post o'tkazildi")
+    else:
+        post_uz = make_post(
+            _sarlavha_uz, _j1_uz, _j2_uz,
+            daraja, d.get("hashtag_uz", "#Янгилик #1КУН"),
+            d.get("location_uz", ""), "uz"
+        )
+        if _send_with_photo(post_uz, TELEGRAM_CHANNEL_UZ, photo_path):
+            log.info(f"✅ Telegram UZ → {TELEGRAM_CHANNEL_UZ}")
 
-    # INGLIZ → @birkunday_en
+    # ── RUS → @birkunday_ru ───────────────────────────────────
+    _sarlavha_ru = d.get("sarlavha_ru", "").strip()
+    _j1_ru       = d.get("jumla1_ru", "").strip()
+    _j2_ru       = d.get("jumla2_ru", "").strip()
+    if not _sarlavha_ru:
+        log.warning("⚠️  sarlavha_ru bo'sh — RU post o'tkazildi")
+    elif not _has_body(_j1_ru, _j2_ru):
+        log.warning(f"⚠️  RU matn juda qisqa ({len(_j1_ru)} harf) — RU post o'tkazildi")
+    else:
+        post_ru = make_post(
+            _sarlavha_ru, _j1_ru, _j2_ru,
+            daraja, d.get("hashtag_ru", "#Новости #1День"),
+            d.get("location_ru", ""), "ru"
+        )
+        if _send_with_photo(post_ru, TELEGRAM_CHANNEL_RU, photo_path):
+            log.info(f"✅ Telegram RU → {TELEGRAM_CHANNEL_RU}")
+
+    # ── INGLIZ → @birkunday_en ────────────────────────────────
     _j1_en = d.get("jumla1_en", "")
     _j2_en = d.get("jumla2_en", "")
-    # jumla2_en bo'sh bo'lsa — jumla1_en ni bo'lamiz
-    if not _j2_en and _j1_en:
-        _sents_en = re.split(r'(?<=[.!?…])\s+', _j1_en.strip())
-        if len(_sents_en) >= 4:
-            mid_en = len(_sents_en) // 2
-            _j1_en = " ".join(_sents_en[:mid_en]).strip()
-            _j2_en = " ".join(_sents_en[mid_en:]).strip()
-    post_en = make_post(
-        d["sarlavha_en"], _j1_en, _j2_en,
-        daraja, d["hashtag_en"], d.get("location_en", ""), "en"
-    )
-    if send_telegram(post_en, TELEGRAM_CHANNEL_EN):
-        log.info(f"✅ Telegram EN → {TELEGRAM_CHANNEL_EN}")
+    if not _has_body(_j1_en, _j2_en):
+        log.warning(f"⚠️  EN matn juda qisqa ({len(_j1_en)} harf) — EN post o'tkazildi")
+    else:
+        if not _j2_en and _j1_en:
+            _sents_en = re.split(r'(?<=[.!?…])\s+', _j1_en.strip())
+            if len(_sents_en) >= 4:
+                mid_en = len(_sents_en) // 2
+                _j1_en = " ".join(_sents_en[:mid_en]).strip()
+                _j2_en = " ".join(_sents_en[mid_en:]).strip()
+        post_en = make_post(
+            d["sarlavha_en"], _j1_en, _j2_en,
+            daraja, d["hashtag_en"], d.get("location_en", ""), "en"
+        )
+        if _send_with_photo(post_en, TELEGRAM_CHANNEL_EN, photo_path):
+            log.info(f"✅ Telegram EN → {TELEGRAM_CHANNEL_EN}")
+
+    # Vaqtinchalik faylni o'chirish
+    if photo_path:
+        try:
+            import os as _os
+            _os.remove(photo_path)
+        except Exception:
+            pass
 
 
 # ══════════════════════════════════════════════════════════════

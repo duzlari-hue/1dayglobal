@@ -39,12 +39,12 @@ VW, VH        = 1280, 720
 FPS           = 25
 OPEN_DUR      = 4       # Ochilish kartasi
 TITLE_DUR     = 4       # Har bir yangilik sarlavha kartasi
-PHOTO_DUR     = 56      # Har bir yangilik foto (statik) — ~1 daqiqa per story
-OUTRO_DUR     = 4       # Yakunlash kartasi
+PHOTO_DUR     = 90      # Har bir yangilik foto — TTS bilan ~1-2 daqiqa
+OUTRO_DUR     = 8       # Yakunlash kartasi (musiqa outro uchun kengaytirilgan)
 TRANS_DUR     = 0.5     # Crossfade
 MAX_ITEMS     = 6       # Bir videoda maksimal yangilik soni
 MIN_ITEMS     = 1       # Minimum yangilik
-WORDS_PER_STORY = 120   # Har bir yangilik naratsiya so'zlari (~50s speech)
+WORDS_PER_STORY = 220   # Har bir yangilik naratsiya so'zlari (~90s speech)
 MUSIC_VOL     = 0.28    # Fon musiqasi balandligi (eshitilarli bo'lsin)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -184,6 +184,260 @@ def _extract_stats(text: str) -> list[dict]:
         if len(stats) >= 2:
             break
     return stats
+
+
+_POLITICIAN_CONTEXT = {
+    # Ism (kichik harf) → (qidiruv so'rovi, davlat/lavozim)
+    "netanyahu":  ("Netanyahu Israel Prime Minister", "Netanyahu"),
+    "sinwar":     ("Hamas Gaza leader", "Gaza Hamas"),
+    "zelensky":   ("Zelensky Ukraine President", "Ukraine president"),
+    "putin":      ("Putin Russia President Kremlin", "Putin Russia"),
+    "trump":      ("Trump US President White House", "Trump"),
+    "biden":      ("Biden US President", "Biden White House"),
+    "xi jinping": ("Xi Jinping China President", "China president"),
+    "xi":         ("Xi Jinping China President", "China Beijing"),
+    "macron":     ("Macron France President Elysee", "Macron France"),
+    "modi":       ("Modi India Prime Minister", "India Modi"),
+    "erdogan":    ("Erdogan Turkey President", "Turkey Ankara"),
+    "kim":        ("Kim Jong Un North Korea leader", "North Korea"),
+    "sunak":      ("Sunak UK Prime Minister", "UK government"),
+    "starmer":    ("Starmer UK Prime Minister", "UK government"),
+    "scholz":     ("Scholz Germany Chancellor", "Germany Berlin"),
+    "khamenei":   ("Khamenei Iran Supreme Leader", "Iran Tehran"),
+    "nasrallah":  ("Nasrallah Hezbollah Lebanon", "Lebanon Hezbollah"),
+    "musk":       ("Elon Musk CEO Tesla SpaceX", "Elon Musk"),
+    "zelenski":   ("Zelensky Ukraine President", "Ukraine president"),
+    "herzog":     ("Herzog Israel President", "Israel"),
+    "gallant":    ("Gallant Israel Defense Minister", "Israel military"),
+    "blinken":    ("Blinken US Secretary State", "US diplomacy"),
+    "rubio":      ("Rubio US Secretary State", "US diplomacy"),
+    "lavrov":     ("Lavrov Russia Foreign Minister", "Russia diplomacy"),
+    "guterres":   ("Guterres UN Secretary General", "United Nations"),
+}
+
+
+# ── Joylar va obyektlar — kontekstli Pexels so'rovlari uchun ────
+_LOCATION_CONTEXT = {
+    # Ukraina/Rossiya
+    "zaporizhzhia": "Zaporizhzhia nuclear power plant Ukraine",
+    "zaporizhzhya": "Zaporizhzhia nuclear power plant Ukraine",
+    "chernobyl":    "Chernobyl nuclear plant Ukraine",
+    "kyiv":         "Kyiv Ukraine",
+    "kiev":         "Kyiv Ukraine",
+    "mariupol":     "Mariupol Ukraine destroyed city",
+    "kharkiv":      "Kharkiv Ukraine",
+    "donbas":       "Donbas Ukraine war",
+    "donetsk":      "Donetsk Ukraine",
+    "crimea":       "Crimea peninsula",
+    "moscow":       "Moscow Russia Kremlin",
+    "kremlin":      "Kremlin Moscow",
+    "st. petersburg": "Saint Petersburg Russia",
+    # Yaqin Sharq
+    "gaza":         "Gaza Palestine destruction",
+    "rafah":        "Rafah Gaza",
+    "tel aviv":     "Tel Aviv Israel",
+    "jerusalem":    "Jerusalem Israel",
+    "beirut":       "Beirut Lebanon",
+    "tehran":       "Tehran Iran",
+    "damascus":     "Damascus Syria",
+    "aleppo":       "Aleppo Syria",
+    "baghdad":      "Baghdad Iraq",
+    "kabul":        "Kabul Afghanistan",
+    # Yevropa
+    "london":       "London UK",
+    "paris":        "Paris France",
+    "berlin":       "Berlin Germany",
+    "rome":         "Rome Italy",
+    "madrid":       "Madrid Spain",
+    "brussels":     "Brussels Belgium EU",
+    # Boshqalar
+    "washington":   "Washington DC United States",
+    "white house":  "White House Washington",
+    "pentagon":     "Pentagon US military",
+    "beijing":      "Beijing China",
+    "pyongyang":    "Pyongyang North Korea",
+    "ankara":       "Ankara Turkey",
+    "istanbul":     "Istanbul Turkey",
+    "mali":         "Mali West Africa military",
+    "sahel":        "Sahel Africa desert",
+    "yemen":        "Yemen Sanaa",
+    "bamako":       "Bamako Mali",
+}
+
+_OBJECT_CONTEXT = {
+    # Hujum/qurol
+    "nuclear plant":   "nuclear power station reactor",
+    "nuclear power":   "nuclear power station reactor",
+    "nuclear":         "nuclear power station",
+    "drone strike":    "military drone Ukraine",
+    "drone":           "military drone aircraft",
+    "missile":         "missile launch military",
+    "rocket":          "rocket missile attack",
+    "tank":            "military tank battle",
+    "warship":         "navy warship military",
+    "fighter jet":     "fighter jet military aircraft",
+    "airstrike":       "airstrike bombing aftermath",
+    "explosion":       "explosion smoke aftermath",
+    "blast":           "explosion blast smoke",
+    "shelling":        "artillery shelling war",
+    "ceasefire":       "ceasefire peace negotiation",
+    # Ofat/yong'in
+    "wildfire":        "wildfire forest fire",
+    "earthquake":      "earthquake destruction",
+    "flood":           "flood disaster",
+    "tornado":         "tornado storm",
+    "hurricane":       "hurricane storm aftermath",
+    # Diplomatiya
+    "summit":          "international summit meeting",
+    "talks":           "diplomatic talks meeting",
+    "negotiations":    "diplomatic negotiations table",
+    "elections":       "voting ballot election",
+    "protests":        "street protest demonstration",
+    "rally":           "political rally crowd",
+    # Iqtisod
+    "oil":             "oil refinery industry",
+    "gas pipeline":    "natural gas pipeline",
+    "stock market":    "stock market trading",
+    # Boshqa
+    "hospital":        "hospital emergency",
+    "refugee":         "refugees crisis migration",
+    "earthquake":      "earthquake destruction city",
+}
+
+
+def _extract_person_queries(en_title: str) -> list:
+    """
+    Sarlavhadan shaxs/joy/obyekt nomlarini ajratish va kontekstli Pexels so'rovlari yasash.
+    Tartib: 1) Joy + obyekt birga (eng aniq) → 2) Siyosatchi → 3) Joy → 4) Obyekt → 5) Proper nouns.
+    """
+    title_lower = en_title.lower()
+    result = []
+    seen_q = set()
+
+    def _add(q: str):
+        ql = q.lower().strip()
+        if ql and ql not in seen_q:
+            seen_q.add(ql)
+            result.append(q)
+
+    # 1. Joy + obyekt kombinatsiyasi (masalan, "Zaporizhzhia nuclear plant drone")
+    found_loc = None
+    for loc_key, loc_q in _LOCATION_CONTEXT.items():
+        if loc_key in title_lower:
+            found_loc = (loc_key, loc_q)
+            break
+
+    found_obj = None
+    # Obyektlardan eng spesifikni topish (uzunroq matn — aniqroq)
+    for obj_key in sorted(_OBJECT_CONTEXT.keys(), key=len, reverse=True):
+        if obj_key in title_lower:
+            found_obj = (obj_key, _OBJECT_CONTEXT[obj_key])
+            break
+
+    if found_loc and found_obj:
+        # Birlashma so'rov — eng aniq tasvir uchun
+        _add(f"{found_loc[1]} {found_obj[0]}")
+
+    # 2. Taniqli siyosatchilar
+    for name, (contextual_q, fallback_q) in _POLITICIAN_CONTEXT.items():
+        if name in title_lower:
+            _add(contextual_q)
+            _add(fallback_q)
+            if len(result) >= 3:
+                break
+
+    # 3. Faqat joy (siyosatchi yo'q bo'lsa)
+    if found_loc:
+        _add(found_loc[1])
+
+    # 4. Faqat obyekt
+    if found_obj:
+        _add(found_obj[1])
+
+    # 5. Proper nouns (zaxira)
+    if not result:
+        _COMMON_CAPS = {
+            "The","A","An","In","On","At","To","For","Of","And",
+            "Or","But","As","By","Is","Are","Was","Has","Says",
+            "New","Over","After","Before","US","EU","UN","UK",
+        }
+        phrases = re.findall(r'\b([A-Z][a-z]{2,}(?:\s+[A-Z][a-z]{2,})*)\b', en_title)
+        for ph in phrases:
+            if ph not in _COMMON_CAPS:
+                _add(ph)
+
+    return result[:4]   # Eng ko'pi 4 ta so'rov
+
+
+def _make_infographic_card(
+        sarlavha: str, stats: list, names: list, lang: str, out_path: str) -> str:
+    """
+    Stats va muhim nomlar bilan infografik karta.
+    Sof matnli, qoramtir fon — videoniyalik uchun.
+    """
+    img  = Image.new("RGB", (VW, VH), (4, 8, 22))
+    _gradient_rect(ImageDraw.Draw(img), 0, 0, VW, VH, (6, 12, 35), (2, 5, 18))
+    img  = _draw_map_bg(img, alpha=20)
+    draw = ImageDraw.Draw(img)
+
+    # Aksent chiziq
+    draw.rectangle([(0, 0), (8, VH)], fill=C_GOLD)
+    draw.rectangle([(0, 0), (VW, 5)], fill=C_GOLD)
+
+    # Yuqori: kanal nomi
+    brand = {"uz": "1КУН GLOBAL", "ru": "1ДЕНЬ GLOBAL", "en": "1DAY GLOBAL"}.get(lang, "1KUN")
+    draw.text((VW // 2, 35), brand, font=_font(26), fill=C_GOLD, anchor="mm")
+    draw.rectangle([(0, 60), (VW, 63)], fill=C_GOLD)
+
+    # Sarlavha qisqa (2 qator)
+    if sarlavha:
+        wrapped = textwrap.wrap(sarlavha, width=48)[:2]
+        ty = 90
+        for i, line in enumerate(wrapped):
+            fs = 36 if i == 0 else 30
+            _text_shadow(draw, (VW // 2, ty), line, font=_font(fs),
+                         fill=C_WHITE, offset=2, anchor="mm")
+            ty += fs + 8
+
+    # Stats bloklari — markazda katta raqamlar
+    if stats:
+        sx = 120
+        sy = 200
+        for stat in stats[:3]:
+            val  = stat.get("val", "")
+            unit = stat.get("unit", "")
+            if not val:
+                continue
+            # Katta raqam
+            draw.rectangle([(sx - 10, sy - 10),
+                             (sx + 240, sy + 100)],
+                            fill=(10, 20, 55))
+            draw.rectangle([(sx - 10, sy - 10),
+                             (sx + 240, sy - 7)],
+                            fill=C_GOLD)
+            draw.text((sx + 115, sy + 40), val,
+                      font=_font(52), fill=C_GOLD, anchor="mm")
+            if unit:
+                draw.text((sx + 115, sy + 82), unit.upper()[:12],
+                          font=_font(20, bold=False), fill=C_LGRAY, anchor="mm")
+            sx += 280
+            if sx + 240 > VW - 20:
+                sx = 120; sy += 130
+
+    # Ismlar / kalit so'zlar (pastda)
+    if names:
+        ny = VH - 100
+        name_str = "  ·  ".join(n[:25] for n in names[:5])
+        draw.rectangle([(0, ny - 10), (VW, VH - 50)],
+                       fill=(8, 16, 40))
+        draw.text((VW // 2, ny + 20), name_str,
+                  font=_font(22), fill=C_LGRAY, anchor="mm")
+
+    # Pastki chiziq
+    draw.rectangle([(0, VH - 5), (VW, VH)], fill=C_GOLD)
+
+    img.save(out_path, "JPEG", quality=93)
+    return out_path
 
 
 # ─────────────────────────────────────────────────────────────
@@ -790,6 +1044,107 @@ _CYR2LAT = {
 async def _tts_async(text: str, voice: str, rate: str, out_path: str):
     comm = edge_tts.Communicate(text, voice, rate=rate)
     await comm.save(out_path)
+
+
+_CYR_CHARS = "абвгдеёжзийклмнопрстуфхцчшщъыьэюяўқғҳАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯЎҚҒҲ"
+
+# UZ matni axlat ekanligini aniqlash uchun belgilar
+_GARBAGE_UZ_WORDS = {
+    "ўзбекчалаштирилди", "tarjima", "translated", "translation",
+    "ёғин",      # fire (ёнғин) o'rniga rain (ёғин) — tez-tez xato
+    "шамбí",     # lotin harflar aralashtirish
+    "бор",       # "oldinга bor" — mantiqsiz
+    "чўнгай",    # mavjud bo'lmagan so'z
+    "қўллай",    # mavjud bo'lmagan so'z
+    "ажимасчи",  # mavjud bo'lmagan so'z
+    "буйин",     # "bosh" o'rniga
+    "асослари",  # "bazalari" o'rniga
+    "саллатиш",  # "ağdarish" o'rniga
+    "олдинга",   # mantiqsiz
+}
+
+def _is_garbage_uz(text: str) -> bool:
+    """UZ matn axlat (noto'g'ri tarjima) ekanligini aniqlash."""
+    if not text or len(text.strip()) < 5:
+        return True
+    t = text.lower()
+    # Aniq axlat so'zlar bormi?
+    for bad in _GARBAGE_UZ_WORDS:
+        if bad.lower() in t:
+            return True
+    # Lotin harflar kirillda: highway, fire, kabi
+    alpha = [c for c in text if c.isalpha()]
+    if not alpha:
+        return True
+    cyr_ratio = sum(1 for c in alpha if c in _CYR_CHARS) / len(alpha)
+    ascii_ratio = sum(1 for c in alpha if c.isascii()) / len(alpha)
+    # 30%+ ASCII — inglizcha/lotincha aralashtirish (axlat)
+    if ascii_ratio > 0.30:
+        return True
+    # 50% dan kam kirill — yaxshi tarjima emas
+    if cyr_ratio < 0.50:
+        return True
+    return False
+
+
+def _fix_uz_from_ru(ru_text: str, en_title: str) -> str:
+    """RU matnini UZ Kirill ga tarjima qilish (ekran matn uchun).
+    _generate_script dan farqi: bu kirill chiqaradi, u lotin."""
+    if not ru_text or not ru_text.strip():
+        return ""
+    try:
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(_HERE, "..", "TELEGRAM"))
+        from translator import _uz_from_russian
+        result = _uz_from_russian(ru_text[:400], context_en=en_title)
+        if result and len(result.split()) >= 3:
+            return result
+    except Exception as e:
+        log.warning(f"  _fix_uz_from_ru xato: {e}")
+    return ""
+
+
+def _generate_script(en_title: str, jumla_text: str, lang: str) -> str:
+    """Script bo'sh yoki qisqa bo'lsa — Anthropic Sonnet 4.6 bilan yangi script yaratish.
+    Natija: 200-300 so'z, TTS uchun tayyor."""
+    try:
+        import sys as _sys
+        _sys.path.insert(0, os.path.join(_HERE, "..", "TELEGRAM"))
+        from translator import _ask_anthropic  # Anthropic Sonnet 4.6
+
+        lang_map = {
+            "uz": ("Uzbek LATIN script (lotin harflarda, TTS uchun). SOF O'ZBEK tili. "
+                   "Ruscha so'z ishlatma. Trump=Tramp, Biden=Bayden. 200-250 so'z."),
+            "ru": "Russian Cyrillic. 200-250 слов. Подробный репортаж.",
+            "en": "English. 200-250 words. Detailed news report.",
+        }
+        lang_instr = lang_map.get(lang, lang_map["en"])
+
+        prompt = (
+            f"Write a detailed news narration script in {lang_instr}\n"
+            f"News headline: {en_title}\n"
+            f"News context: {jumla_text or 'No additional context available.'}\n\n"
+            "Write a complete narration: explain what happened, where, who is involved, "
+            "why it matters, what are the consequences. Add historical context.\n"
+            "NO intro phrases like 'Welcome to...' or 'This is...'.\n"
+            "Return ONLY the narration text, nothing else."
+        )
+        result = _ask_anthropic(prompt, max_tokens=1500, model="claude-sonnet-4-6")
+        result = result.strip()
+        # Intro/outro iboralarini tozalash
+        result = re.sub(
+            r"^(Efirda\s+1KUN|В\s+эфире\s+1ДЕНЬ|This\s+is\s+1DAY)[^.]*\.\s*",
+            "", result, flags=re.IGNORECASE
+        ).strip()
+        words = result.split()
+        if len(words) >= 50:
+            log.info(f"  ✅ Script generatsiya [{lang.upper()}]: {len(words)} so'z")
+            return result
+        log.warning(f"  ⚠️  Script generatsiya qisqa ({len(words)} so'z)")
+        return result
+    except Exception as e:
+        log.warning(f"  Script generatsiya xato ({lang}): {e}")
+        return ""
 
 
 def _make_tts(text: str, lang: str, daraja: str, out_path: str) -> bool:
@@ -1490,7 +1845,8 @@ def _mix_multi_voice(video_path: str,
                      lang: str) -> bool:
     """
     Har yangilik ovozi o'z vaqtida (adelay) eshitiladi.
-    Fon musiqasi butun video davomida past ovozda yangradi.
+    Fon musiqasi butun video davomida (shu jumladan outro) yangradi.
+    TTS tugagandan keyin ham musiqa kamida 5s davom etadi.
     """
     fx         = AUDIO_FX.get(lang, AUDIO_FX.get("uz", "volume=1.0"))
     music_path = _get_music()
@@ -1522,15 +1878,33 @@ def _mix_multi_voice(video_path: str,
     # Barcha ovozlarni birlashtirish
     fc.append(
         f"{''.join(vlabels)}amix=inputs={len(vlabels)}:"
-        f"normalize=0:duration=longest[allv]"
+        f"normalize=0:duration=longest[allv_raw]"
     )
+    # Muhim: ovoz (TTS) tugagandan keyin video oxirigacha jim (musiqa davom etsin)
+    # apad bilan [allv] ni to'liq video davomiyligiga uzaytirish
+    fc.append(f"[allv_raw]apad=whole_dur={vid_dur:.3f}[allv]")
 
     if has_music:
+        # Musiqa: video davomida past (background), TTS tugagandan keyin ham davom etadi,
+        # oxirgi OUTRO_DUR sekundlarda kuchayadi (outro swell), so'nggi 3s da fade out.
+        # volume=eval=frame:volume=expr — per-sample vaqtga bog'liq balandlik
+        swell_st    = max(0.0, vid_dur - float(OUTRO_DUR))
+        fade_out_st = max(swell_st + 1.0, vid_dur - 3.0)
+        swell_len   = max(0.1, fade_out_st - swell_st)
+        # Ifoda: background → swell (smooth) → fade out
+        vol_expr = (
+            f"if(lt(t,{swell_st:.2f}),"
+            f"{MUSIC_VOL:.3f},"
+            f"if(lt(t,{fade_out_st:.2f}),"
+            f"{MUSIC_VOL:.3f}+{(0.52 - MUSIC_VOL):.3f}*(t-{swell_st:.2f})/{swell_len:.2f},"
+            f"max(0.0,0.52*(1.0-(t-{fade_out_st:.2f})/3.0))))"
+        )
         fc.append(
             f"[{music_idx}:a]aresample=44100,"
             f"atrim=duration={vid_dur:.3f},"
-            f"volume={MUSIC_VOL:.3f}[mus]"
+            f"volume=volume='{vol_expr}':eval=frame[mus]"
         )
+        # duration=first → [allv] (vid_dur uzunlikda) tugaganda to'xtaydi
         fc.append("[allv][mus]amix=inputs=2:duration=first[aout]")
         map_a = "[aout]"
     else:
@@ -1616,15 +1990,58 @@ def digest_pipeline(items: list, lang: str) -> str | None:
         next_title = _iget(items[idx + 1], "sarlavha", lang) if idx + 1 < n else ""
         stats     = _extract_stats(jumla1 + " " + _iget(item, "scripts", lang)[:300])
 
+        # ── UZ axlat tekshiruvi: sarlavha/jumla1 yomon bo'lsa RU→UZ qayta tarjima ──
+        if lang == "uz":
+            sarlavha_ru = _iget(item, "sarlavha", "ru") or ""
+            jumla1_ru   = _iget(item, "jumla",    "ru") or ""
+
+            if _is_garbage_uz(sarlavha):
+                log.info(f"  🔄 sarlavha_uz axlat → RU→UZ tuzatish...")
+                fixed_sv = _fix_uz_from_ru(sarlavha_ru, en_title)
+                if fixed_sv:
+                    log.info(f"     ✓ {fixed_sv[:60]}")
+                    sarlavha = fixed_sv
+                    item = dict(item); item["sarlavha"] = fixed_sv
+
+            if _is_garbage_uz(jumla1):
+                log.info(f"  🔄 jumla1_uz axlat → RU→UZ tuzatish...")
+                fixed_j1 = _fix_uz_from_ru(jumla1_ru, en_title)
+                if fixed_j1:
+                    log.info(f"     ✓ {fixed_j1[:80]}")
+                    jumla1 = fixed_j1
+
         print(f"  ─ Yangilik {story_num}/{n}: {sarlavha[:55]}")
 
-        # -- 2a. Per-item TTS: sarlavha + jumla1
+        # -- 2a. Per-item TTS: sarlavha + to'liq script (450-500 so'z ≈ ~2.5 daqiqa)
         tts_parts = []
         if sarlavha:
             tts_parts.append(sarlavha.strip())
-        if jumla1 and jumla1.strip() != sarlavha.strip():
-            body_words = jumla1.split()[:80]   # Max ~80 so'z (~40s speech)
+
+        # Script (to'liq naratsiya) — jumla1 dan ustunroq
+        script_text = _iget(item, "scripts", lang) or _iget(item, "script", lang) or ""
+        script_text = script_text.strip()
+
+        # Intro/outro iboralarini tozalash
+        script_text = re.sub(
+            r"^(Efirda\s+1KUN\s+Global\.?|В\s+эфире\s+1ДЕНЬ\s+Global\.?|"
+            r"This\s+is\s+1DAY\s+Global\.?)\s*",
+            "", script_text, flags=re.IGNORECASE
+        ).strip()
+
+        body_text = script_text or jumla1 or ""
+
+        # Script qisqa bo'lsa (<60 so'z) — Anthropic bilan yangi script yaratish
+        if len(body_text.split()) < 60:
+            log.info(f"  🔄 Script qisqa ({len(body_text.split())} so'z) → Anthropic bilan generatsiya...")
+            generated = _generate_script(en_title, jumla1, lang)
+            if generated and len(generated.split()) >= 50:
+                body_text = generated
+
+        if body_text and body_text.strip() != sarlavha.strip():
+            # 220 so'z ≈ ~90-110 soniya (1.5 daqiqa) — minimal 30s kafolat
+            body_words = body_text.split()[:220]
             tts_parts.append(" ".join(body_words))
+
         tts_text = ". ".join(tts_parts) if tts_parts else (sarlavha or "")
 
         voice_i   = os.path.join(TEMP_DIR, f"dg_voice_{ts}_{idx:02d}.mp3")
@@ -1632,26 +2049,36 @@ def digest_pipeline(items: list, lang: str) -> str | None:
         tts_ok    = _make_tts(tts_text, lang, daraja, voice_i) if tts_text else False
         tts_dur   = _audio_dur(voice_i) if tts_ok and os.path.exists(voice_i) else 0.0
 
-        # Segment davomiyligi = TTS + 2s buffer (min 8s)
-        seg_dur   = max(tts_dur + 2.0, 8.0) if tts_dur > 0 else 12.0
+        # Segment davomiyligi = TTS + 2s buffer (min 30s — har yangilik kamida yarim daqiqa)
+        seg_dur   = max(tts_dur + 2.0, 30.0) if tts_dur > 0 else 35.0
 
         # Bu item ovozi shu vaqtdan boshlanadi
         voice_info.append((voice_i if tts_ok else None, current_t))
         current_t += seg_dur - TRANS_DUR   # Keyingi item xfade bilan boshlanganda
 
-        # -- 2b. Rasm yuklash
+        # -- 2b. Rasm yuklash (RELEVANCE CHECK: shaxs/joy nomi bo'yicha)
         photo_path = None
+        person_q   = _extract_person_queries(en_title)   # infografik uchun ham kerak
         og_path    = os.path.join(TEMP_DIR, f"dg_og_{ts}_{idx:02d}.jpg")
         if _fetch_og_image(art_url, og_path):
             photo_path = og_path
             all_temps.append(og_path)
             print(f"     📰 og:image olindi")
         else:
-            # Pexels dan qidiramiz
+            # Pexels dan qidiramiz — RELEVANCE PRIORITY:
+            # 1. Sarlavhadagi shaxs/joy nomlari (eng aniq)
+            # 2. To'liq sarlavha
+            # 3. Kalit so'zlar
             px_path  = os.path.join(TEMP_DIR, f"dg_px_{ts}_{idx:02d}.jpg")
             queries  = []
+            # Birinchi: shaxs/joy nomlari (eng muvofiq rasm uchun)
+            for pq in person_q:
+                if all(c.isascii() or not c.isalpha() for c in pq):
+                    queries.append(pq)
+            # Ikkinchi: to'liq sarlavha
             if en_title and all(c.isascii() or not c.isalpha() for c in en_title):
                 queries.append(en_title[:60])
+            # Uchinchi: kalit so'zlar
             for k in kw[:3]:
                 if k and all(c.isascii() or not c.isalpha() for c in k):
                     queries.append(k)
@@ -1683,6 +2110,19 @@ def digest_pipeline(items: list, lang: str) -> str | None:
                 segments.append(seg_vid)
                 durations.append(seg_dur)
                 print(f"     ✓ Segment {seg_dur:.1f}s + overlay")
+
+                # -- 2d. INFOGRAFIK SLAYD (stats/nomlar mavjud bo'lsa — 4s qo'shimcha)
+                if stats or person_q:
+                    info_img = os.path.join(TEMP_DIR, f"dg_info_{ts}_{idx:02d}.jpg")
+                    info_vid = os.path.join(TEMP_DIR, f"dg_info_{ts}_{idx:02d}.mp4")
+                    all_temps += [info_img, info_vid]
+                    _make_infographic_card(sarlavha, stats, person_q, lang, info_img)
+                    INFO_DUR = 4.0
+                    if _still_to_video(info_img, INFO_DUR, info_vid):
+                        segments.append(info_vid)
+                        durations.append(INFO_DUR)
+                        # Infografik uchun ovoz yo'q (current_t allaqachon hisoblangan)
+                        print(f"     ✓ Infografik slayd {INFO_DUR:.0f}s")
                 continue
 
         # Fallback: sarlavha karta (matn baked-in, statik)
@@ -1765,10 +2205,55 @@ def digest_pipeline(items: list, lang: str) -> str | None:
     log.info(f"  📤 Telegram+Facebook postlash boshlandi [{lang.upper()}]...")
     try:
         from social_poster import post_telegram_video
-        sarlavha_tg = _iget(items[0], "sarlavha", lang) if items else ""
-        jumla_tg    = _iget(items[0], "jumla",    lang) if items else ""
-        loc_tg      = _iget(items[0], "location", lang) if items else ""
         daraja_tg   = items[0].get("daraja", "xabar") if items else "xabar"
+
+        # Digest Telegram caption: barcha maqolalar ro'yxati (1-chi maqola kabi ko'rinmaydi)
+        from datetime import datetime as _dtt
+        import pytz as _pytz
+        _tz = _pytz.timezone("Asia/Tashkent")
+        _vaqt = _dtt.now(_tz).strftime("🕐 %H:%M | %d.%m.%Y")
+        _n = len(items)
+        # 1 ta yangilik bo'lsa "DIGEST" emas, oddiy "ЯНГИЛИК" deyiladi
+        if _n == 1:
+            _digest_title = {
+                "uz": "📰 ЯНГИЛИК",
+                "ru": "📰 НОВОСТЬ",
+                "en": "📰 NEWS",
+            }.get(lang, "📰 NEWS")
+        else:
+            _digest_title = {
+                "uz": f"📋 ЯНГИЛИКЛАР ДАЙДЖЕСТИ — {_n} та янгилик",
+                "ru": f"📋 ДАЙДЖЕСТ НОВОСТЕЙ — {_n} новости",
+                "en": f"📋 NEWS DIGEST — {_n} stories",
+            }.get(lang, f"📋 DIGEST — {_n} stories")
+        _kanal = {
+            "uz": "@birkunday",
+            "ru": "@birkunday_ru",
+            "en": "@birkunday_en",
+        }.get(lang, "")
+
+        _lines = [f"<b>{_digest_title}</b>", ""]
+        for _i, _it in enumerate(items, 1):
+            _sv = _iget(_it, "sarlavha", lang)
+            _j1 = _iget(_it, "jumla", lang)
+            _emoji = {"muhim": "🔴", "tezkor": "🟠"}.get(_it.get("daraja",""), "🟢")
+            if _sv:
+                _lines.append(f"{_i}. {_emoji} <b>{_sv[:80]}</b>")
+            if _j1:
+                _short_j1 = (_j1[:120] + "…") if len(_j1) > 120 else _j1
+                _lines.append(f"   {_short_j1}")
+            _lines.append("")
+        _lines.append(_vaqt)
+        if yt_url:
+            _lines.append(f"▶️ {yt_url}")
+        _lines.append(f"📰 {_kanal}")
+        _htag = {
+            "uz": "#Янгиликлар #Дайджест #1КУН",
+            "ru": "#Новости #Дайджест #1День",
+            "en": "#News #Digest #1Day",
+        }.get(lang, "#Digest")
+        _lines.append(f"\n{_htag}")
+        digest_caption_tg = "\n".join(_lines)[:1020]
 
         # Digest video → Telegram (message_id qaytaradi)
         tg_channel = {
@@ -1779,15 +2264,21 @@ def digest_pipeline(items: list, lang: str) -> str | None:
 
         tg_msg_id = post_telegram_video(
             video_path = out_path,
-            sarlavha   = sarlavha_tg,
-            jumla      = jumla_tg,
+            sarlavha   = "",
+            jumla      = "",
             lang       = lang,
             daraja     = daraja_tg,
             yt_url     = yt_url,
-            location   = loc_tg,
+            location   = "",
+            caption    = digest_caption_tg,    # To'liq digest matn (1-maqola emas!)
         )
         # Telegram post havolasi: https://t.me/birkunday/1097
         tg_post_url = f"https://t.me/{tg_channel}/{tg_msg_id}" if (tg_channel and tg_msg_id) else ""
+
+        # FB/IG uchun sarlavha va jumla (1-maqola)
+        sarlavha_tg = _iget(items[0], "sarlavha", lang) if items else ""
+        jumla_tg    = _iget(items[0], "jumla",    lang) if items else ""
+        loc_tg      = _iget(items[0], "location", lang) if items else ""
 
         # Short → Telegram — o'chirilgan (digest allaqachon yuborildi, 2-chi post kerak emas)
         # if short_path and os.path.exists(short_path): ...

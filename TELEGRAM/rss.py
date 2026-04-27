@@ -94,24 +94,49 @@ def load_seen_links():
     return set()
 
 
-def save_seen_link(link, keywords=None):
+_TOPIC_STOP = {
+    "the", "and", "for", "are", "was", "has", "had", "not", "but", "this",
+    "that", "with", "from", "they", "have", "been", "will", "said", "more",
+    "than", "when", "also", "some", "would", "about", "their", "other",
+    "into", "its", "all", "can", "who", "what", "were", "one", "year",
+    "says", "amid", "claim", "report", "after", "over", "calls", "then",
+    "there", "both", "very", "just", "still", "while", "under", "each",
+}
+
+
+def _title_stems(title: str) -> set:
+    words = re.findall(r'[A-Za-z]{4,}', title.lower())
+    return {w[:5] for w in words if w not in _TOPIC_STOP}
+
+
+def save_seen_link(link, title="", keywords=None):
     with open(SEEN_LINKS_FILE, "a", encoding="utf-8") as f:
         f.write(link + "\n")
+        if title:
+            # Sarlavhaning stem'larini saqlash (cross-run topic dedup uchun)
+            stems = _title_stems(title)
+            if stems:
+                f.write(f"__title__{','.join(stems)}\n")
         if keywords:
             for kw in keywords[:3]:
                 f.write(f"__kw__{kw.lower()}\n")
 
 
-def is_topic_seen(keywords):
-    if not keywords or not os.path.exists(SEEN_LINKS_FILE):
+def is_topic_seen(title: str, threshold: int = 2) -> bool:
+    """Sarlavha so'nggi yangiliklardagi mavzu bilan mos kelsa True qaytaradi."""
+    if not title or not os.path.exists(SEEN_LINKS_FILE):
+        return False
+    new_stems = _title_stems(title)
+    if not new_stems:
         return False
     with open(SEEN_LINKS_FILE, "r", encoding="utf-8") as f:
-        seen_kws = set(
-            l.strip().replace("__kw__", "")
-            for l in f if l.strip().startswith("__kw__")
-        )
-    matches = sum(1 for kw in keywords[:4] if kw.lower() in seen_kws)
-    return matches >= 2
+        lines = [l.strip() for l in f if l.strip().startswith("__title__")]
+    # Faqat so'nggi 200 ta yozuvni tekshirish
+    for line in lines[-200:]:
+        saved_stems = set(line.replace("__title__", "").split(","))
+        if len(new_stems & saved_stems) >= threshold:
+            return True
+    return False
 
 
 def fetch_rss_news(count=10):
@@ -148,8 +173,8 @@ def fetch_rss_news(count=10):
                     except Exception:
                         pass
 
-                words = [w.lower() for w in title.split() if len(w) > 4]
-                if is_topic_seen(words[:4]):
+                if is_topic_seen(title):
+                    log.debug(f"Mavzu allaqachon ko'rilgan: {title[:60]}")
                     continue
 
                 session_seen.add(link)

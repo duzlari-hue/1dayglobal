@@ -4,6 +4,7 @@ import sys
 import re
 import json
 import glob
+import time
 import logging
 from datetime import datetime
 from dotenv import load_dotenv
@@ -28,7 +29,10 @@ logging.basicConfig(
 )
 log = logging.getLogger(__name__)
 
-SEEN_FILE = "output/seen_articles.json"
+SEEN_FILE        = "output/seen_articles.json"
+SEEN_TOPICS_FILE = "output/seen_topics.json"   # Cross-run topic dedup
+
+MIN_DIGEST_ITEMS = 1   # 1 ta yangilik bo'lsa ham post qilamiz; 3+ bo'lsa to'liq digest
 
 # Rossiya axborot manbalari — o'tkazib yuboriladi
 RUSSIAN_DOMAINS = {
@@ -53,6 +57,26 @@ def load_seen():
 def save_seen(seen):
     with open(SEEN_FILE, "w", encoding="utf-8") as f:
         json.dump(list(seen), f, ensure_ascii=False, indent=2)
+
+
+def load_seen_topics() -> list:
+    """Cross-run duplikat topiclarni saqlash — so'nggi 24 soat uchun."""
+    if os.path.exists(SEEN_TOPICS_FILE):
+        try:
+            with open(SEEN_TOPICS_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            # Faqat so'nggi 24 soatdagi mavzularni saqla
+            cutoff = time.time() - 86400
+            return [e for e in data if e.get("ts", 0) > cutoff]
+        except Exception:
+            pass
+    return []
+
+
+def save_seen_topics(entries: list):
+    os.makedirs("output", exist_ok=True)
+    with open(SEEN_TOPICS_FILE, "w", encoding="utf-8") as f:
+        json.dump(entries, f, ensure_ascii=False, indent=2)
 
 
 def is_russian_source(url: str) -> bool:
@@ -362,15 +386,64 @@ def _process_queue_inner():
         log.info("Yaroqli yangilik yo'q")
         return
 
-    # ── FAQAT 1 ta batch — eng so'nggi DIGEST_BATCH ta yangilik ──
-    # (Keyingi chaqiruvda qolgan fayllar qayta ishlanadi)
+    # ── DUPLIKAT MAVZULARNI OLIB TASHLASH ─────────────────────
+    def _topics_overlap(t1: str, t2: str, threshold: int = 2) -> bool:
+        stop = _TITLE_STOP | {"says", "report", "amid", "claim", "calls", "over", "after"}
+        words1 = [w for w in re.findall(r'[A-Za-z]{4,}', t1.lower()) if w not in stop]
+        words2 = [w for w in re.findall(r'[A-Za-z]{4,}', t2.lower()) if w not in stop]
+        stems1 = {w[:5] for w in words1}
+        stems2 = {w[:5] for w in words2}
+        return len(stems1 & stems2) >= threshold
+
     done_dir = f"{QUEUE_DIR}/done"
     os.makedirs(done_dir, exist_ok=True)
 
+    # 1. Cross-run dedup: so'nggi 24 soatda qayta ishlangan mavzular
+    prior_topic_entries = load_seen_topics()
+    prior_topic_titles  = [e["title"] for e in prior_topic_entries]
+
+    deduped     = []
+    seen_titles = list(prior_topic_titles)   # starts with yesterday's topics
+    dup_count   = 0
+    for raw in parsed:
+        title = raw.get("title", "")
+        if any(_topics_overlap(title, st) for st in seen_titles):
+            log.info(f"  Duplikat mavzu o'tkazildi: {title[:60]}")
+            # Fayl ham ko'chirilsin (queue dan tozalansin)
+            try:
+                os.rename(raw["qfile"], f"{done_dir}/{os.path.basename(raw['qfile'])}")
+            except Exception:
+                pass
+            dup_count += 1
+            continue
+        seen_titles.append(title)
+        deduped.append(raw)
+    if dup_count:
+        log.info(f"  Duplikat olib tashlandi: {dup_count} ta | Qoldi: {len(deduped)} ta")
+    parsed = deduped
+
+    if not parsed:
+        log.info("Duplikat filtrlashdan keyin yangilik qolmadi")
+        return
+
+    # 2. Minimum yangilik soni tekshiruvi
+    if len(parsed) < MIN_DIGEST_ITEMS:
+        log.info(f"  Kam yangilik ({len(parsed)} ta < {MIN_DIGEST_ITEMS}) — digest o'tkazildi")
+        return
+
+    # 3. Topiclarni DARROV seen_topics ga yozamiz — crash bo'lsa ham qaytib ishlamaydi
+    _early_entries = [
+        {"title": raw["title"], "ts": time.time()}
+        for raw in parsed[:DIGEST_BATCH] if raw.get("title")
+    ]
+    save_seen_topics(prior_topic_entries + _early_entries)
+    log.info(f"  Topic ro'yxatga olindi: {len(_early_entries)} ta (24 soatlik dedup)")
+
+    # ── FAQAT 1 ta batch — eng so'nggi DIGEST_BATCH ta yangilik ──
     if True:   # Faqat 1 iteratsiya
         batch_start = 0
         batch = parsed[:DIGEST_BATCH]
-        log.info(f"\n📺 Digest batch: 1–{len(batch)}/{len(parsed)}")
+        log.info(f"\nDigest batch: 1-{len(batch)}/{len(parsed)}")
 
         any_lang_ok = False
         # Social media uchun natijalarni to'playmiz
@@ -382,7 +455,7 @@ def _process_queue_inner():
         location_map  = {}   # lang → location
         daraja_main   = "xabar"
 
-        for lang in ["en"]:  # ⏸️ UZ/RU vaqtincha o'chirilgan — faqat EN
+        for lang in ["uz", "ru", "en"]:
             # Har bir yangilik uchun digest item yasaymiz
             items = []
             for raw in batch:
@@ -462,6 +535,14 @@ def _process_queue_inner():
         if any_lang_ok and seen:
             save_seen(seen)
 
+        # Qayta ishlangan mavzularni saqlash (cross-run dedup uchun)
+        if any_lang_ok:
+            new_entries = [
+                {"title": raw["title"], "ts": time.time()}
+                for raw in batch if raw.get("title")
+            ]
+            save_seen_topics(prior_topic_entries + new_entries)
+
         log.info("")
 
 
@@ -474,7 +555,7 @@ def run_daily_shorts_all():
     try:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         from daily_shorts import make_daily_shorts
-        for lg in ["en"]:  # ⏸️ UZ/RU vaqtincha o'chirilgan — faqat EN
+        for lg in ["uz", "ru", "en"]:
             try:
                 log.info(f"  → Daily Shorts ({lg.upper()}) yaratilmoqda...")
                 result = make_daily_shorts(lg)
@@ -566,7 +647,7 @@ def run_analysis_all():
             return ""   # Inglizcha matn — bo'sh qaytarish
         return text.strip()
 
-    for lang in ["en"]:  # ⏸️ UZ/RU vaqtincha o'chirilgan — faqat EN
+    for lang in ["uz", "ru", "en"]:
         items = []
         for raw in parsed:
             raw_sarlavha = raw["sarlavhalar"].get(lang, "")

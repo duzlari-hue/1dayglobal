@@ -9,13 +9,14 @@ import os
 # .env fayldan API key yuklab olish (app.py oldin yuklamasa ham ishlaydi)
 try:
     from dotenv import load_dotenv as _lde
-    _lde(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"), override=False)
+    _lde(dotenv_path=os.path.join(os.path.dirname(__file__), ".env"), override=True)
 except Exception:
     pass
 
 GEMINI_API_KEY     = os.getenv("GEMINI_API_KEY", "")
 OPENROUTER_API_KEY = os.getenv("OPENROUTER_API_KEY", "")  # openrouter.ai (fallback)
-ANTHROPIC_API_KEY  = os.getenv("ANTHROPIC_API_KEY", "")   # api.anthropic.com (asosiy fallback)
+ANTHROPIC_API_KEY  = os.getenv("ANTHROPIC_API_KEY", "")   # api.anthropic.com (asosiy)
+GROQ_API_KEY       = os.getenv("GROQ_API_KEY", "")        # groq.com (tezkor zaxira)
 
 log = logging.getLogger(__name__)
 
@@ -297,10 +298,49 @@ def _gen_hashtags(keywords_en: list, lang: str, daraja: str = "xabar") -> str:
     return " ".join(parts[:5])
 
 
-def _fix_title_only(original_en: str, lang: str) -> str:
-    """Faqat sarlavhani alohida qayta so'rash (qisqa prompt)."""
+def _uz_from_russian(ru_text: str, context_en: str = "") -> str:
+    """Ruscha matnni o'zbek kirilliga tarjima qilish (EN→UZ dan yaxshiroq).
+    RU→UZ juftligi model uchun EN→UZ dan ancha tanish."""
+    if not ru_text or not ru_text.strip():
+        return ""
+    prompt = (
+        "Переведи следующий русский текст на узбекский язык КИРИЛЛИЦЕЙ (ўзбек кирилл алифбоси).\n"
+        "Используй узбекскую лексику (НЕ русские слова!). Sentence case — только первое слово "
+        "и имена собственные с большой буквы.\n"
+        "Пример: 'Министр обороны убит в результате нападения' → "
+        "'Мудофаа вазири ҳужумда ҳалок бўлди'\n\n"
+        f"Текст: {ru_text}\n\n"
+        "Верни ТОЛЬКО переведённый текст на узбекском кириллицей, без пояснений."
+    )
+    try:
+        result = groq_ask(prompt, max_tokens=300).strip()
+        result = result.strip('"\'«»„"')
+        # Tekshirish: kirill bo'lishi kerak
+        if any(c in result for c in _CYR):
+            result = _apply_uz_places(result)
+            result = _apply_uz_terms(result)
+            return _fix_case(result)
+        log.warning(f"_uz_from_russian: kirill yo'q — '{result[:50]}'")
+        return ""
+    except Exception as e:
+        log.warning(f"_uz_from_russian xato: {e}")
+        return ""
+
+
+def _fix_title_only(original_en: str, lang: str, source_ru: str = "") -> str:
+    """Faqat sarlavhani alohida qayta so'rash (qisqa prompt).
+    UZ uchun: source_ru mavjud bo'lsa RU->UZ (ancha yaxshi) ishlatiladi."""
+
+    # UZ: Ruscha manba bo'lsa — RU->UZ yo'li (ancha sifatli)
+    if lang == "uz" and source_ru and source_ru.strip():
+        result = _uz_from_russian(source_ru[:150], context_en=original_en)
+        if result and _is_valid_title(result, "uz"):
+            log.info(f"  _fix_title_only UZ (RU->UZ): '{result[:60]}'")
+            return result
+        # Muvaffaqiyatsiz — quyida standart yo'l sinab ko'riladi
+
     lang_map = {
-        "uz": "Uzbek CYRILLIC script (ўзбек кириллида). 5-8 so'z, sentence case. Faqat birinchi so'z va xos ismlar bosh harf. Ruscha so'z ishlatma.",
+        "uz": "Uzbek CYRILLIC script (o'zbek kirillida). 5-8 so'z, sentence case. Faqat birinchi so'z va xos ismlar bosh harf. Ruscha so'z ishlatma.",
         "ru": "Russian. 5-8 words, sentence case. Only first word and proper nouns capitalized.",
         "en": "English. 5-8 words, sentence case. Only first word and proper nouns capitalized.",
     }
@@ -313,11 +353,11 @@ def _fix_title_only(original_en: str, lang: str) -> str:
     _is_lby = any(k in _en_lower for k in
                   ("libya", "libyan", "tripoli", "benghazi", "haftar"))
     if _is_lbn and not _is_lby:
-        _geo = ("\nCRITICAL: This is about LEBANON (Ливан/Livan, Middle East). "
-                "NEVER use 'Ливия' or 'Liviya' (that is Libya/Africa).\n")
+        _geo = ("\nCRITICAL: This is about LEBANON (Livan, Middle East). "
+                "NEVER use 'Liviya' (that is Libya/Africa).\n")
     elif _is_lby and not _is_lbn:
-        _geo = ("\nCRITICAL: This is about LIBYA (Ливия/Liviya, North Africa). "
-                "NEVER use 'Ливан' or 'Livan' (that is Lebanon/Middle East).\n")
+        _geo = ("\nCRITICAL: This is about LIBYA (Liviya, North Africa). "
+                "NEVER use 'Livan' (that is Lebanon/Middle East).\n")
     else:
         _geo = ""
 
@@ -328,13 +368,15 @@ def _fix_title_only(original_en: str, lang: str) -> str:
         f"Return ONLY the translated headline text, nothing else."
     )
     try:
-        result = groq_ask(prompt, max_tokens=80).strip()
+        result = groq_ask(prompt, max_tokens=120).strip()
         # Tirnoq va germetik belgilarni tozalash
         result = result.strip('"\'«»„"')
         if lang == "uz":
-            # Lotin bo'lsa — kiriллga
+            # Lotin bo'lsa — kirillga
             if not any(c in result for c in _CYR):
                 result = lat2cyr(result)
+            result = _apply_uz_places(result)
+            result = _apply_uz_terms(result)
             result = _fix_case(result)
         else:
             result = _fix_case(result)
@@ -463,9 +505,9 @@ def _ask_openrouter(prompt, max_tokens=2500) -> str:
     raise Exception("OpenRouter barcha modellar muvaffaqiyatsiz: " + " | ".join(errors))
 
 
-def _ask_anthropic(prompt, max_tokens=2500) -> str:
-    """Anthropic API — to'g'ridan-to'g'ri Claude (OpenRouter'siz, ishonchli).
-    Model: claude-3-haiku-20240307 (arzon, tez, yuqori sifat)
+def _ask_anthropic(prompt, max_tokens=2500, model="claude-sonnet-4-6") -> str:
+    """Anthropic API — to'g'ridan-to'g'ri Claude (asosiy tarjimon).
+    Model: claude-sonnet-4-6 (yuqori sifat, o'zbek/rus tarjimasi uchun eng yaxshi)
     """
     if not ANTHROPIC_API_KEY:
         raise Exception("ANTHROPIC_API_KEY yo'q")
@@ -477,11 +519,11 @@ def _ask_anthropic(prompt, max_tokens=2500) -> str:
             "content-type":      "application/json",
         },
         json={
-            "model":      "claude-3-haiku-20240307",
-            "max_tokens": min(max_tokens, 2048),
+            "model":      model,
+            "max_tokens": min(max_tokens, 8192),
             "messages":   [{"role": "user", "content": prompt}],
         },
-        timeout=90,
+        timeout=120,
     )
     if r.status_code == 429:
         log.warning("Anthropic rate limit — 30s kutilmoqda...")
@@ -493,32 +535,87 @@ def _ask_anthropic(prompt, max_tokens=2500) -> str:
         raise Exception(f"Anthropic 400: {r.text[:120]}")
     r.raise_for_status()
     result = r.json()["content"][0]["text"].strip()
-    log.info("  ✅ Anthropic claude-3-haiku")
+    log.info(f"  ✅ Anthropic {model}")
     return result
 
 
+def _ask_groq(prompt, max_tokens=2500) -> str:
+    """Groq API — llama-3.3-70b (tezkor, bepul, yaxshi sifat).
+    Groq OpenAI-compatible API ishlatadi.
+    """
+    if not GROQ_API_KEY:
+        raise Exception("GROQ_API_KEY yo'q")
+    models = [
+        "llama-3.3-70b-versatile",   # Eng kuchli bepul model
+        "llama3-70b-8192",           # Klassik Llama 3
+        "mixtral-8x7b-32768",        # Mixtral (kontekst katta)
+    ]
+    for model in models:
+        try:
+            r = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {GROQ_API_KEY}",
+                    "Content-Type":  "application/json",
+                },
+                json={
+                    "model":       model,
+                    "messages":    [{"role": "user", "content": prompt}],
+                    "temperature": 0.3,
+                    "max_tokens":  min(max_tokens, 6000),
+                },
+                timeout=60,
+            )
+            if r.status_code == 429:
+                log.warning(f"Groq {model} rate limit — 10s...")
+                time.sleep(10)
+                continue
+            if r.status_code in (400, 404):
+                log.warning(f"Groq {model} xato {r.status_code} — keyingi model...")
+                continue
+            if r.status_code in (401, 403):
+                raise Exception(f"Groq API key xato: {r.status_code}")
+            r.raise_for_status()
+            result = r.json()["choices"][0]["message"]["content"].strip()
+            log.info(f"  ✅ Groq {model}")
+            return result
+        except Exception as e:
+            err = str(e)
+            if "401" in err or "403" in err:
+                raise
+            log.warning(f"Groq {model} xato: {err[:80]}")
+    raise Exception("Groq: barcha modellar muvaffaqiyatsiz")
+
+
 def groq_ask(prompt, max_tokens=2500, retries=2):
-    """Tarjimon zanjiri: 1.Gemini (2 urinish, ~45s) → 2.Anthropic Claude → 3.OpenRouter"""
+    """Tarjimon zanjiri: 1.Anthropic Sonnet → 2.Groq Llama → 3.Gemini → 4.OpenRouter"""
     errors = []
 
-    # ── 1. Gemini 2.0 Flash (asosiy, bepul) ─────────────────
+    # ── 1. Anthropic Claude Sonnet 4.6 (asosiy, eng yuqori sifat) ──
+    if ANTHROPIC_API_KEY:
+        try:
+            return _ask_anthropic(prompt, max_tokens, model="claude-sonnet-4-6")
+        except Exception as e:
+            log.warning(f"Anthropic Sonnet → Groq ga o'tilmoqda: {e}")
+            errors.append(f"Anthropic: {e}")
+
+    # ── 2. Groq Llama-3.3-70b (tezkor, bepul, yaxshi sifat) ─────
+    if GROQ_API_KEY:
+        try:
+            return _ask_groq(prompt, max_tokens)
+        except Exception as e:
+            log.warning(f"Groq → Gemini ga o'tilmoqda: {e}")
+            errors.append(f"Groq: {e}")
+
+    # ── 3. Gemini 2.0 Flash (zaxira, bepul) ─────────────────
     if GEMINI_API_KEY:
         try:
             return _ask_gemini(prompt, max_tokens, retries)
         except Exception as e:
-            log.warning(f"Gemini → Anthropic ga o'tilmoqda: {e}")
+            log.warning(f"Gemini → OpenRouter ga o'tilmoqda: {e}")
             errors.append(f"Gemini: {e}")
 
-    # ── 2. Anthropic Claude (to'g'ridan-to'g'ri API, ishonchli) ──
-    if ANTHROPIC_API_KEY:
-        log.info("  ↩️  Anthropic claude-3-haiku...")
-        try:
-            return _ask_anthropic(prompt, max_tokens)
-        except Exception as e:
-            log.warning(f"Anthropic → OpenRouter ga o'tilmoqda: {e}")
-            errors.append(f"Anthropic: {e}")
-
-    # ── 3. OpenRouter (zaxira) ───────────────────────────────
+    # ── 4. OpenRouter (so'nggi zaxira) ──────────────────────
     if OPENROUTER_API_KEY:
         log.info("  ↩️  OpenRouter (zaxira)...")
         try:
@@ -626,25 +723,44 @@ RULES:
 - daraja: muhim=war/disaster/crisis, tezkor=politics/economy/diplomacy, xabar=other
 - hashtag fields: REAL topic-specific hashtags ONLY. NEVER use placeholders like #УзТег1 #РуТег1 #EnTag1
 - UZBEK PLACE NAMES for sarlavha/jumla (CYRILLIC). Use EXACT forms (NOT Russian forms!):
-  Iran=Эрон (NOT Иран, NOT Ирон!), Iraq=Ироқ, Afghanistan=Афғонистон,
-  Pakistan=Покистон (NOT Пакистан, NOT Пакистон!), India=Ҳиндистон,
+  Iran=Эрон (NOT Иран!), Iraq=Ироқ, Afghanistan=Афғонистон,
+  Pakistan=Покистон (NOT Пакистан!), India=Ҳиндистон,
   China=Хитой, Israel=Исроил (NOT Израил!), Palestine=Фаластин, Syria=Сурия, Yemen=Яман,
-  Lebanon=Ливан, Egypt=Миср, Turkey=Туркия,
+  Lebanon=Ливан (NOT Либия!), Egypt=Миср, Turkey=Туркия,
   Jordan=Урдун, Libya=Либия (Afrika, NOT Lebanon!),
   Morocco=Мароқаш, Algeria=Жазоир, Sudan=Судон, Ethiopia=Ҳабашистон,
   Saudi Arabia=Саудия Арабистони, UAE=БАА, Gaza=Ғазо,
+  Russia=Россия, Ukraine=Украина, Belarus=Беларусь, Kazakhstan=Қозоғистон,
+  Azerbaijan=Озарбайжон (NOT Озарбойжон! NOT Азарбайжон!),
+  Armenia=Арманистон, Georgia=Грузия,
+  Kyiv=Киев, Moscow=Москва, Washington=Вашингтон, London=Лондон,
+  Paris=Париж, Berlin=Берлин, Brussels=Брюссел, Geneva=Женева,
   Islamabad=Исломобод, Tehran=Теҳрон, Damascus=Дамашқ, Baghdad=Бағдод,
   Kabul=Қобул, Delhi=Деҳли, Ankara=Анқара, Istanbul=Истанбул,
-  Beirut=Байрут, Riyadh=Риёд, Doha=Доҳа, Tokyo=Токио (NOT Токиё)
-- UZBEK TERMS: ceasefire=ўт очишни тўхтатиш (NOT оташбас, NOT оташкесим!),
+  Beirut=Байрут, Riyadh=Риёд, Doha=Доҳа, Tokyo=Токио,
+  New York=Нью-Йорк, Brussels=Брюссел
+- UZBEK TERMS (MUHIM — noto'g'ri tarjimalarni TAQIQLANG!):
+  negotiations=музокаралар (NOT суҳбатлар! NOT сўхбат! NOT гуфтугў!),
+  talks=музокаралар (NOT суҳбатлар! NOT сўхбат!),
+  peace talks=тинчлик музокаралари,
+  ceasefire=оташбас (NOT "ўт очишни тўхтатиш"),
   West Bank=Ғарбий соҳил, airstrikes=авиазарба, sanctions=санкциялар,
-  negotiations=музокаралар, Jewish/jew=яҳудий (NOT еврей!),
-  Jews=яҳудийлар, Israeli=исроиллик, settlement=мустамлака
+  meeting=учрашув, summit=саммит, agreement=келишув, deal=битим,
+  missile=ракета, drone=дрон, troops=қўшинлар, forces=кучлар,
+  president=президент, minister=вазир, parliament=парламент,
+  Jewish/jew=яҳудий (NOT еврей!), Jews=яҳудийлар, Israeli=исроиллик,
+  settlement=мустамлака, hostages=гаровдагилар, prisoners=маҳбуслар,
+  Zelensky=Зеленский, Putin=Путин, Trump=Трамп, Biden=Байден,
+  Netanyahu=Нетаняҳу, Macron=Макрон, Modi=Моди, Xi=Си (Си Цзиньпин),
+  Musk=Маск, OpenAI=ОпенАИ (NOT "Очиқ АИ"!), Tesla=Тесла
 - UZBEK PLACE NAMES for script_uz (LATIN TTS):
-  Israel=Isroil (NOT Izrail!), Lebanon=Livan (NOT Liviya! Liviya=Libya/Afrika),
+  Israel=Isroil (NOT Izrail!), Lebanon=Livan (NOT Liviya!),
   Iran=Eron, Iraq=Iroq, Palestine=Falastin, Syria=Suriya, Gaza=Gʻazo,
   Turkey=Turkiya, Egypt=Misr, Saudi Arabia=Saudiya Arabistoni,
-  ceasefire=oʻt ochishni toʻxtatish
+  Russia=Rossiya, Ukraine=Ukraina, Azerbaijan=Ozarbayjon (NOT Ozarboyjon!),
+  Kazakhstan=Qozogʻiston, Armenia=Armaniston, Georgia=Gruziya,
+  ceasefire=oʻt ochishni toʻxtatish,
+  negotiations=muzokaralar (NOT suhbat!), talks=muzokaralar
 - search_queries: REAL EVENT footage only, NO studio/anchor/presenter. Use EXACT names from the news.
 - keywords_en: 5 SPECIFIC proper nouns — person names, countries, organizations.
 - shot_list: 6 shots that tell the visual story. Each "search" must target FIELD footage — NO anchors, NO studio, NO panel, NO interview, NO analysis, NO presenter. Use specific locations, people, actions. Include year 2026."""
@@ -677,21 +793,43 @@ Details: {description}
 CRITICAL: sarlavha_uz, jumla1_uz, jumla2_uz — FAQAT O'ZBEK KIRILLI (а,б,в,г,д...). Inglizcha YOZMA!
 CRITICAL: sarlavha_ru, jumla1_ru, jumla2_ru — FAQAT RUSCHA (а,б,в,г,д...). Inglizcha YOZMA!"""
 
-    # ── 1. Gemini — to'liq prompt (skript, shot_list bilan) ─────────────
-    data     = None
-    _gem_err = None   # Python 3: except clause var deleted after block — save separately
-    try:
-        data = parse_json(_ask_gemini(prompt, max_tokens=3000, retries=2))
-    except Exception as _e:
-        _gem_err = _e
-        log.warning(f"Gemini muvaffaqiyatsiz → OpenRouter qisqa so'rov: {_gem_err}")
+    # ── 1. Anthropic Claude Sonnet 4.6 — to'liq prompt (asosiy, eng yuqori sifat) ──
+    data      = None
+    _ant_err  = None
+    if ANTHROPIC_API_KEY:
+        try:
+            raw_ant = _ask_anthropic(prompt, max_tokens=8000, model="claude-sonnet-4-6")
+            data = parse_json(raw_ant)
+            log.info("✅ Anthropic Sonnet 4.6 — asosiy tarjima")
+        except Exception as _e:
+            _ant_err = _e
+            log.warning(f"Anthropic Sonnet xato → Groq ga o'tilmoqda: {_ant_err}")
 
-    # ── 2. OpenRouter — qisqa prompt (skriptsiz, max 700 token) ─────────
+    # ── 2. Groq Llama-3.3-70b — to'liq prompt (tezkor, bepul, yaxshi sifat) ──
+    _groq_err = None
+    if data is None and GROQ_API_KEY:
+        try:
+            data = parse_json(_ask_groq(prompt, max_tokens=6000))
+            log.info("✅ Groq Llama-3.3-70b — zaxira tarjima")
+        except Exception as _e:
+            _groq_err = _e
+            log.warning(f"Groq xato → Gemini ga o'tilmoqda: {_groq_err}")
+
+    # ── 3. Gemini 2.0 Flash — to'liq prompt (bepul, 3-chi zaxira) ───────
+    _gem_err = None
+    if data is None and GEMINI_API_KEY:
+        try:
+            data = parse_json(_ask_gemini(prompt, max_tokens=3000, retries=2))
+            log.info("✅ Gemini 2.0 Flash — zaxira tarjima")
+        except Exception as _e:
+            _gem_err = _e
+            log.warning(f"Gemini ham xato → OpenRouter qisqa so'rov: {_gem_err}")
+
+    # ── 4. OpenRouter — qisqa prompt (so'nggi zaxira) ───────────────────
     if data is None:
         try:
             raw_or = _ask_openrouter(short_prompt, max_tokens=700)
             data = parse_json(raw_or)
-            # Skript maydonlari bo'sh — Gemini ishlamadi
             for _sf in ("script_uz", "script_ru", "script_en",
                         "hook_uz", "hook_ru", "hook_en"):
                 data.setdefault(_sf, "")
@@ -699,7 +837,7 @@ CRITICAL: sarlavha_ru, jumla1_ru, jumla2_ru — FAQAT RUSCHA (а,б,в,г,д...)
             data.setdefault("search_queries", [])
             log.info("✅ OpenRouter qisqa so'rov muvaffaqiyatli")
         except Exception as e_or:
-            log.warning(f"Tarjima xato (barcha servislar): Gemini: {_gem_err} | OpenRouter: {e_or}")
+            log.warning(f"Tarjima xato: Anthropic:{_ant_err} | Groq:{_groq_err} | Gemini:{_gem_err} | OpenRouter:{e_or}")
             # Fallback: UZ/RU bo'sh (placeholder emas!), EN — orijinal matn
             _en_script = (description or title or "").strip()
             _en_j1     = _en_script[:600] if _en_script else title
@@ -775,19 +913,33 @@ CRITICAL: sarlavha_ru, jumla1_ru, jumla2_ru — FAQAT RUSCHA (а,б,в,г,д...)
             log.debug(f"lat2cyr ({field}): o'zbek lotin→kirill")
         else:
             # Inglizcha yoki noto'g'ri til — lat2cyr QILMAYMIZ
-            log.warning(f"⚠️  {field} inglizcha: '{val[:50]}' — qayta so'ralmoqda...")
-            fixed = _fix_title_only(title, "uz")
+            log.warning(f"⚠️  {field} inglizcha: '{val[:50]}' — RU->UZ yo'li sinab ko'rilmoqda...")
+            # Birinchi: RU manbasidan UZ tarjima (sifat yaxshiroq)
+            _ru_src = ""
+            if "sarlavha" in field:
+                _ru_src = data.get("sarlavha_ru", "")
+            elif "jumla1" in field:
+                _ru_src = data.get("jumla1_ru", "")
+            elif "jumla2" in field:
+                _ru_src = data.get("jumla2_ru", "")
+
+            fixed = ""
+            if _ru_src and _ru_src.strip():
+                fixed = _uz_from_russian(_ru_src[:400], context_en=title)
+
+            # RU->UZ muvaffaqiyatsiz — EN sarlavhadan retry
+            if not fixed or not _is_mostly_cyr(fixed):
+                fixed = _fix_title_only(title, "uz", source_ru=data.get("sarlavha_ru", ""))
+
             if fixed and _is_mostly_cyr(fixed):
-                if "sarlavha" in field:
+                if "sarlavha" in field or "jumla" in field:
                     data[field] = fixed
-                elif "jumla1" in field:
-                    data[field] = fixed  # jumla1 uchun sarlavhani ishlat
                 else:
-                    data[field] = ""    # jumla2, location — bo'sh qoldir
+                    data[field] = ""    # location — bo'sh qoldir
                 log.debug(f"  ✓ {field} tuzatildi: '{data[field][:50]}'")
             else:
                 data[field] = ""  # Bo'sh — lat2cyr gibberish'dan yaxshi
-                log.warning(f"  ✗ {field} bo'sh qoldirildi (inglizcha tarjima qilinmadi)")
+                log.warning(f"  ✗ {field} bo'sh qoldirildi (tarjima qilinmadi)")
 
     # ── UZ kirill maydonlarga joy nomlari (rus→o'zbek) ───────
     for field in _CYR_FIELDS:
@@ -854,7 +1006,9 @@ CRITICAL: sarlavha_ru, jumla1_ru, jumla2_ru — FAQAT RUSCHA (а,б,в,г,д...)
         val = data.get(lang_key, "")
         if not _is_valid_title(val, lang_code):
             log.warning(f"⚠️  {lang_key} yaroqsiz: '{val[:60]}' — qayta so'ralmoqda...")
-            fixed = _fix_title_only(en_title, lang_code)
+            # UZ uchun: avval RU sarlavhasidan tarjima qilish (sifat yaxshiroq)
+            _src_ru = data.get("sarlavha_ru", "") if lang_code == "uz" else ""
+            fixed = _fix_title_only(en_title, lang_code, source_ru=_src_ru)
             if _is_valid_title(fixed, lang_code):
                 data[lang_key] = fixed
                 log.info(f"✅ {lang_key} tuzatildi: '{fixed}'")

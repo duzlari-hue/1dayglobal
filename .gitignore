@@ -56,3 +56,7 @@ desktop.ini
 # Queue files (runtime)
 output/youtube_queue/
 output/videos/
+
+# Queue folders (transient news data)
+YOUTUBE/queue/
+TELEGRAM/output/

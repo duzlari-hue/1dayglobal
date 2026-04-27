@@ -26,6 +26,7 @@ from config import TASHKENT, SCHEDULE_HOURS, TELEGRAM_CHANNEL_UZ
 from rss import fetch_rss_news, save_seen_link
 from translator import groq_translate
 from telegram_bot import send_all_languages, send_daily_digest_all
+from photo_of_day import run_photo_of_day
 
 logging.basicConfig(
     level=logging.INFO,
@@ -39,6 +40,33 @@ log = logging.getLogger(__name__)
 
 
 def run_pipeline():
+    # ── Lock: parallel bot instansiyalari bir vaqtda ishlamasin ──
+    import time as _time
+    _lock_path = "output/.pipeline.lock"
+    os.makedirs("output", exist_ok=True)
+    if os.path.exists(_lock_path):
+        try:
+            age = _time.time() - os.path.getmtime(_lock_path)
+            if age < 600:   # 10 daqiqadan kam — boshqa instansiya ishlayapti
+                log.warning(f"⏳ Pipeline lock band ({age:.0f}s) — o'tkazildi")
+                return
+        except Exception:
+            pass
+    try:
+        open(_lock_path, "w").close()
+    except Exception:
+        pass
+
+    try:
+        _run_pipeline_inner()
+    finally:
+        try:
+            os.remove(_lock_path)
+        except Exception:
+            pass
+
+
+def _run_pipeline_inner():
     log.info(f"🚀 Pipeline — {datetime.now(TASHKENT).strftime('%H:%M')} (Toshkent)")
 
     # 1. RSS
@@ -112,7 +140,7 @@ def run_pipeline():
             "hook_en":     article.get("title", "")[:50],
         }
 
-    save_seen_link(article["link"], keywords=d.get("keywords_en", []))
+    save_seen_link(article["link"], title=article.get("title", ""), keywords=d.get("keywords_en", []))
 
     # 3. Telegram — 3 kanalga 3 tilda
     send_all_languages(d, article)
@@ -235,12 +263,23 @@ def main():
         id="daily_digest",
         misfire_grace_time=300,
     )
+    # Kunning eng yaxshi fotosi — tushlik 12:00
+    scheduler.add_job(
+        run_photo_of_day,
+        CronTrigger(hour=12, minute=0, timezone=TASHKENT),
+        id="photo_of_day",
+        misfire_grace_time=600,
+    )
     log.info(f"⏰ Yangiliklar: {', '.join(str(h)+':00' for h in SCHEDULE_HOURS)}")
     log.info("⏰ Kunlik digest: 21:00 (Toshkent)")
+    log.info("⏰ Kunning fotosi: 12:00 (Toshkent)")
     log.info("Ctrl+C — to'xtatish\n")
 
     if "--now" in sys.argv or "--once" in sys.argv:
         run_pipeline()
+        return
+    if "--photo" in sys.argv:
+        run_photo_of_day()
         return
 
     scheduler.start()

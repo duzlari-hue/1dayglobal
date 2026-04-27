@@ -187,11 +187,13 @@ def post_telegram_video(
         yt_url: str = "",
         location: str = "",
         channel: str = None,
+        caption: str = "",      # Tayyor caption (bo'lsa _caption() chaqirilmaydi)
 ) -> bool:
     """
     Telegram kanaliga video yuborish.
     video_path — local .mp4 fayl
     channel    — None bo'lsa lang dan avtomatik aniqlanadi
+    caption    — tayyor matn (digest uchun); bo'lsa sarlavha/jumla ishlatilmaydi
     """
     if not TELEGRAM_BOT_TOKEN:
         log.warning("  ⚠️  TELEGRAM_BOT_TOKEN yo'q")
@@ -202,7 +204,11 @@ def post_telegram_video(
         log.warning(f"  ⚠️  Telegram kanal topilmadi ({lang})")
         return False
 
-    cap = _caption(sarlavha, jumla, lang, daraja, yt_url, location)
+    # Tayyor caption bo'lsa → ishlatamiz, bo'lmasa → _caption() bilan yasaymiz
+    if caption:
+        cap = caption[:1020]
+    else:
+        cap = _caption(sarlavha, jumla, lang, daraja, yt_url, location)
     # Telegram max caption = 1024 belgi
     cap = cap[:1020]
 
