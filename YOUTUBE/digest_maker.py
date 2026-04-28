@@ -2202,7 +2202,12 @@ def digest_pipeline(items: list, lang: str) -> str | None:
             print(f"   ⚠️  Short xato: {_se}")
 
     # ── 10. TELEGRAM + FACEBOOK POSTLASH (shu til kanali) ────────
-    log.info(f"  📤 Telegram+Facebook postlash boshlandi [{lang.upper()}]...")
+    # ⚠️ VAQTINCHA O'CHIRILGAN — foydalanuvchi so'rovi bo'yicha
+    # YouTube digest videolar Telegram kanaliga yuborilmasin (faqat YouTube'ga)
+    if False:
+        log.info(f"  📤 Telegram+Facebook postlash boshlandi [{lang.upper()}]...")
+    else:
+        log.info(f"  ⏸️  Telegram/FB post o'chirilgan (foydalanuvchi sozlamasi) [{lang.upper()}]")
     try:
         from social_poster import post_telegram_video
         daraja_tg   = items[0].get("daraja", "xabar") if items else "xabar"
@@ -2262,18 +2267,20 @@ def digest_pipeline(items: list, lang: str) -> str | None:
             "en": "birkunday_en",
         }.get(lang, "")
 
-        tg_msg_id = post_telegram_video(
-            video_path = out_path,
-            sarlavha   = "",
-            jumla      = "",
-            lang       = lang,
-            daraja     = daraja_tg,
-            yt_url     = yt_url,
-            location   = "",
-            caption    = digest_caption_tg,    # To'liq digest matn (1-maqola emas!)
-        )
-        # Telegram post havolasi: https://t.me/birkunday/1097
-        tg_post_url = f"https://t.me/{tg_channel}/{tg_msg_id}" if (tg_channel and tg_msg_id) else ""
+        # ⚠️ YouTube digest video Telegram'ga yuborilmasin (foydalanuvchi so'rovi)
+        # Telegram bot o'z yangiliklarini alohida postlaydi
+        tg_msg_id = None
+        # tg_msg_id = post_telegram_video(
+        #     video_path = out_path,
+        #     sarlavha   = "",
+        #     jumla      = "",
+        #     lang       = lang,
+        #     daraja     = daraja_tg,
+        #     yt_url     = yt_url,
+        #     location   = "",
+        #     caption    = digest_caption_tg,
+        # )
+        tg_post_url = ""
 
         # FB/IG uchun sarlavha va jumla (1-maqola)
         sarlavha_tg = _iget(items[0], "sarlavha", lang) if items else ""

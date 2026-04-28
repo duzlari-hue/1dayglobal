@@ -744,6 +744,17 @@ RULES:
   talks=музокаралар (NOT суҳбатлар! NOT сўхбат!),
   peace talks=тинчлик музокаралари,
   ceasefire=оташбас (NOT "ўт очишни тўхтатиш"),
+  aid=ёрдам (NOT қарз! NOT қарз пуллар!),
+  foreign aid=хорижий ёрдам, humanitarian aid=инсонпарварлик ёрдами,
+  loan=қарз (BU "aid" EMAS!), grant=грант, donation=хайрия,
+  PM-designate=Бош вазир номзоди, designate=номзод (NOT тадбиркор!),
+  candidate=номзод, nominee=номзод, appointed=тайинланган,
+  businessman=тадбиркор (FAQAT "businessman/entrepreneur" uchun!),
+  report=ҳисобот (NOT егоҳда! NOT йегоҳда!),
+  parliamentary report=парламент ҳисоботи,
+  committee=қўмита, MPs warn=депутатлар огоҳлантирмоқда,
+  significant gaps=жиддий камчиликлар, strategy=стратегия,
+  cuts=қисқартиришлар, budget cuts=бюджет қисқартмалари,
   West Bank=Ғарбий соҳил, airstrikes=авиазарба, sanctions=санкциялар,
   meeting=учрашув, summit=саммит, agreement=келишув, deal=битим,
   missile=ракета, drone=дрон, troops=қўшинлар, forces=кучлар,
@@ -753,6 +764,12 @@ RULES:
   Zelensky=Зеленский, Putin=Путин, Trump=Трамп, Biden=Байден,
   Netanyahu=Нетаняҳу, Macron=Макрон, Modi=Моди, Xi=Си (Си Цзиньпин),
   Musk=Маск, OpenAI=ОпенАИ (NOT "Очиқ АИ"!), Tesla=Тесла
+- HEADLINE RULES (MAJBURIY!):
+  * sarlavha_uz MUST capture the SPECIFIC story, NOT generic statements
+  * BAD example: "Британияда ўзгаришлар бўлди" (too generic, meaningless)
+  * GOOD example: "Британия хорижий ёрдам стратегиясида жиддий камчиликлар"
+  * Include: WHO did WHAT or WHAT happened — specific subject + action
+  * Avoid empty phrases: "...ҳақида", "...бўлди", "...билан боғлиқ"
 - UZBEK PLACE NAMES for script_uz (LATIN TTS):
   Israel=Isroil (NOT Izrail!), Lebanon=Livan (NOT Liviya!),
   Iran=Eron, Iraq=Iroq, Palestine=Falastin, Syria=Suriya, Gaza=Gʻazo,

@@ -71,8 +71,13 @@ def _detect_lang_from_path(path: str) -> str:
     return "uz"   # default
 
 
-def _build_smart_playlist(allowed_langs: list, randomize: bool = True) -> tuple:
+def _build_smart_playlist(allowed_langs: list, randomize: bool = True,
+                            max_age_hours: float = 24.0,
+                            min_videos: int = 30) -> tuple:
     """Aralash playlist yasash. Qaytaradi: (playlist_path, segments).
+
+    max_age_hours — videolar shu necha soatdan eski bo'lmasin
+    min_videos    — agar 24h ichida bu sondan kam bo'lsa, vaqt cheklovni cho'zish
 
     segments: [{"path": ..., "lang": ..., "duration": ..., "cum_start": ...}]
     """
@@ -84,8 +89,26 @@ def _build_smart_playlist(allowed_langs: list, randomize: bool = True) -> tuple:
     if not all_videos:
         raise SystemExit("output/videos/ da hech qanday video yo'q!")
 
+    # 24 soatlik filtr — yangi videolar ustun
+    cutoff = time.time() - (max_age_hours * 3600)
+    fresh = [v for v in all_videos if os.path.getmtime(v) > cutoff]
+
+    if len(fresh) >= min_videos:
+        log.info(f"   Yangi videolar (≤{max_age_hours:.0f}h): {len(fresh)} ta — eski videolar olib tashlandi")
+        all_videos = fresh
+    else:
+        # 24h ichida kam — vaqt cheklovni 48h, 72h ga cho'zamiz
+        for hours in (48, 72, 168):   # 2 kun, 3 kun, 1 hafta
+            cutoff = time.time() - (hours * 3600)
+            fresh = [v for v in all_videos if os.path.getmtime(v) > cutoff]
+            if len(fresh) >= min_videos:
+                log.info(f"   Yangi videolar (≤{hours}h): {len(fresh)} ta")
+                all_videos = fresh
+                break
+        else:
+            log.info(f"   Barcha videolar ishlatiladi: {len(all_videos)} ta")
+
     # Multiplikatorga qarab har lang qo'shimcha kelishi mumkin
-    # (--langs uz,uz,ru,en bilan UZ ikki barobar)
     weighted = []
     for l in allowed_langs:
         l_videos = [v for v in all_videos if _detect_lang_from_path(v) == l]
@@ -213,6 +236,10 @@ def main():
                         help="Qaysi tillar aralashadi (vergul bilan)")
     parser.add_argument("--test", action="store_true",
                         help="60s lokal MP4 — RTMP emas")
+    parser.add_argument("--refresh-hours", type=float, default=1.0,
+                        help="Har necha soatda playlist yangilanadi (default: 1)")
+    parser.add_argument("--max-age", type=float, default=24.0,
+                        help="Videolar shu soatdan eski bo'lmasin (default: 24)")
     args = parser.parse_args()
 
     allowed_langs = [l.strip() for l in args.langs.split(",")
@@ -226,58 +253,151 @@ def main():
         return
 
     log.info(f"🎬 SMART OVERLAY stream — tillar: {','.join(allowed_langs).upper()}")
+    if not args.test:
+        log.info(f"   Auto-refresh: har {args.refresh_hours} soatda playlist yangilanadi")
+        log.info(f"   Yangi videolar: ≤{args.max_age} soat (eski tushib ketadi)")
 
-    # 1. Aralash playlist va segments
-    playlist_path, segments, total_dur = _build_smart_playlist(allowed_langs)
+    rtmp = f"{ls.RTMP_BASE}/{stream_key}" if not args.test else ""
 
-    # 2. Filter (smart fayllarni o'qiydi)
+    def _build_ffmpeg_cmd(playlist_path):
+        cmd = [
+            "ffmpeg",
+            "-y",
+            "-err_detect", "ignore_err",
+            "-fflags", "+genpts+igndts",
+            "-f", "concat", "-safe", "0",
+            "-stream_loop", "-1",
+            "-i", str(playlist_path),
+            "-filter_complex", filter_graph,
+            "-map", last_label, "-map", "0:a?",
+            "-c:v", "libx264", "-preset", "ultrafast",
+            "-tune", "zerolatency",
+            "-b:v", "1500k", "-maxrate", "1800k", "-bufsize", "3000k",
+            "-pix_fmt", "yuv420p",
+            "-g", "50", "-keyint_min", "50",
+            "-r", "25",
+            "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
+        ]
+        if not args.test:
+            cmd.insert(1, "-re")
+            cmd += ["-f", "flv", rtmp]
+        else:
+            cmd += ["-t", "60", "-f", "mp4", str(LIVE_DIR / "test_smart.mp4")]
+        return cmd
+
+    # 1. Birinchi playlist + filter
+    playlist_path, segments, total_dur = _build_smart_playlist(
+        allowed_langs, max_age_hours=args.max_age)
     filter_graph, last_label = _build_smart_filter()
 
-    # 3. Conductor thread
+    # 2. Conductor thread
     t_start_ref = [time.time()]
+    segments_ref = [segments]   # mutable — refresh paytida o'zgaradi
+    total_dur_ref = [total_dur]
     stop_event = threading.Event()
-    cond = threading.Thread(target=_conductor_loop,
-                              args=(segments, total_dur, t_start_ref, stop_event),
-                              daemon=True)
-    cond.start()
 
-    # 4. ffmpeg buyrug'i
-    rtmp = f"{ls.RTMP_BASE}/{stream_key}" if not args.test else ""
-    cmd = [
-        "ffmpeg",
-        "-y",
-        "-f", "concat", "-safe", "0",
-        "-stream_loop", "-1",
-        "-i", str(playlist_path),
-        "-filter_complex", filter_graph,
-        "-map", last_label, "-map", "0:a?",
-        "-c:v", "libx264", "-preset", "ultrafast",
-        "-tune", "zerolatency",
-        "-b:v", "1500k", "-maxrate", "1800k", "-bufsize", "3000k",
-        "-pix_fmt", "yuv420p",
-        "-g", "50", "-keyint_min", "50",
-        "-r", "25",
-        "-c:a", "aac", "-b:a", "128k", "-ar", "44100",
-    ]
-    if not args.test:
-        cmd.insert(1, "-re")
-        cmd += ["-f", "flv", rtmp]
-    else:
-        cmd += ["-t", "60", "-f", "mp4", str(LIVE_DIR / "test_smart.mp4")]
+    def _conductor_dynamic():
+        """Conductor — refresh paytida segments_ref/total_dur_ref dan o'qiydi."""
+        last_lang = None
+        last_refresh_time = 0
+        while not stop_event.is_set():
+            try:
+                elapsed = time.time() - t_start_ref[0]
+                segs = segments_ref[0]
+                td   = total_dur_ref[0]
+                if not segs or td <= 0:
+                    stop_event.wait(2); continue
+                cycle_t = elapsed % td
+                current = segs[0]
+                for s in segs:
+                    if s["cum_start"] <= cycle_t < s["cum_start"] + s["duration"]:
+                        current = s
+                        break
+                if current["lang"] != last_lang:
+                    log.info(f"🔄 Til: {current['lang'].upper()}  ({pathlib.Path(current['path']).name[:50]})")
+                    _write_overlay_for_lang(current["lang"])
+                    last_lang = current["lang"]
+                    last_refresh_time = time.time()
+                elif time.time() - last_refresh_time > 300:
+                    _write_overlay_for_lang(current["lang"])
+                    last_refresh_time = time.time()
+                (LIVE_DIR / "clock_smart.txt").write_text(
+                    datetime.now(TASHKENT).strftime("%H:%M"), encoding="utf-8")
+            except Exception as e:
+                log.warning(f"Conductor xato: {e}")
+            stop_event.wait(2)
+
+    threading.Thread(target=_conductor_dynamic, daemon=True).start()
 
     if args.test:
         log.info(f"🎬 TEST → {LIVE_DIR}/test_smart.mp4")
-    else:
-        log.info(f"📡 RTMP → live2/{stream_key[:8]}...")
-    log.info(f"   Conductor thread ishga tushdi — overlay videoga moslanadi")
+        cmd = _build_ffmpeg_cmd(playlist_path)
+        try:
+            subprocess.run(cmd)
+        except KeyboardInterrupt:
+            log.info("⏹️ To'xtatildi")
+        finally:
+            stop_event.set()
+        return
+
+    log.info(f"📡 RTMP → live2/{stream_key[:8]}...")
     log.info(f"   Ctrl+C bilan to'xtatish")
 
-    # ffmpeg ishga tushishidan oldin t_start ni reset qilamiz
-    t_start_ref[0] = time.time()
+    # 3. Auto-refresh loopi — har N soatda playlist yangilanadi
+    refresh_interval = args.refresh_hours * 3600
+    current_proc = None
+
     try:
-        subprocess.run(cmd)
+        while not stop_event.is_set():
+            cmd = _build_ffmpeg_cmd(playlist_path)
+            t_start_ref[0] = time.time()
+            log.info(f"▶️  ffmpeg ishga tushdi — keyingi refresh: {args.refresh_hours} soat")
+            current_proc = subprocess.Popen(cmd)
+
+            # refresh_interval davomida kutamiz, ffmpeg crash bo'lsa qaytadan
+            cycle_start = time.time()
+            while time.time() - cycle_start < refresh_interval:
+                if current_proc.poll() is not None:
+                    log.warning("⚠️  ffmpeg tugadi — 5s dan keyin qaytadan")
+                    time.sleep(5)
+                    break
+                time.sleep(5)
+
+            # ffmpeg ni yopamiz (refresh kerak)
+            if current_proc.poll() is None:
+                log.info("🔄 Playlist yangilanmoqda...")
+                try:
+                    current_proc.terminate()
+                    for _ in range(10):
+                        if current_proc.poll() is not None: break
+                        time.sleep(1)
+                    if current_proc.poll() is None:
+                        current_proc.kill()
+                except Exception:
+                    pass
+
+            # Yangi playlist + segments
+            try:
+                playlist_path, new_segments, new_total = _build_smart_playlist(
+                    allowed_langs, max_age_hours=args.max_age)
+                segments_ref[0]  = new_segments
+                total_dur_ref[0] = new_total
+                log.info(f"✨ Yangi playlist: {len(new_segments)} ta video")
+            except Exception as e:
+                log.error(f"Playlist yangilash xato: {e}")
+
+            time.sleep(2)   # YouTube tiklanish uchun
+
     except KeyboardInterrupt:
         log.info("⏹️ To'xtatildi")
+        if current_proc and current_proc.poll() is None:
+            try:
+                current_proc.terminate()
+                time.sleep(2)
+                if current_proc.poll() is None:
+                    current_proc.kill()
+            except Exception:
+                pass
     finally:
         stop_event.set()
 
