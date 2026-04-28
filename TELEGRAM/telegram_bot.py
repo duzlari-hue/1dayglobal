@@ -49,7 +49,17 @@ def make_post(sarlavha, jumla1, jumla2, daraja, hashtaglar, location, lang="uz")
     if location:
         post += f"📍 {location}\n"
     post += vaqt + "\n"
-    post += f"📰 {kanal}\n\n"
+    post += f"📰 {kanal}\n"
+
+    # ── YouTube kanal havolasi (har post pastida) ─────────────
+    yt_label = {
+        "uz": "🎬 1Kun | Global News",
+        "ru": "🎬 1День | Global News",
+        "en": "🎬 1Day | Global News",
+    }.get(lang, "🎬 1Day | Global News")
+    yt_link = "https://www.youtube.com/@1kunnews"
+    post += f'{yt_label}: <a href="{yt_link}">{yt_link}</a>\n\n'
+
     post += hashtaglar
     return post
 
