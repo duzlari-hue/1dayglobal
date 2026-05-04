@@ -708,6 +708,46 @@ def send_all_languages(d, article):
 # ══════════════════════════════════════════════════════════════
 # EN kanalga RSS DAN BEVOSITA post (tarjima kutilmaydi)
 # ══════════════════════════════════════════════════════════════
+def _fetch_article_text(url: str, max_chars: int = 1200) -> str:
+    """Maqola URL dan asosiy matn paragraflarini olish."""
+    if not url:
+        return ""
+    try:
+        import urllib.request as _ur
+        req = _ur.Request(url, headers={
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+        })
+        with _ur.urlopen(req, timeout=8) as resp:
+            html = resp.read().decode("utf-8", errors="ignore")
+        try:
+            from bs4 import BeautifulSoup as _BS
+            soup = _BS(html, "html.parser")
+            for tag in soup(["script","style","nav","footer","header","aside","form"]):
+                tag.decompose()
+            paras = soup.find_all("p")
+            texts = []
+            for p in paras:
+                t = p.get_text(" ", strip=True)
+                if len(t) < 40:
+                    continue
+                if any(x in t.lower() for x in ["subscribe","sign up","newsletter",
+                                                  "cookie","advertisement","©"]):
+                    continue
+                texts.append(t)
+                if sum(len(x) for x in texts) >= max_chars:
+                    break
+            body = " ".join(texts)
+            return body[:max_chars].strip()
+        except ImportError:
+            import re as _re3
+            body = _re3.sub(r'<[^>]+>', ' ', html)
+            body = _re3.sub(r'\s+', ' ', body)
+            return body[2000:2000+max_chars].strip()
+    except Exception as e:
+        log.debug(f"_fetch_article_text xato ({url[:60]}): {e}")
+        return ""
+
+
 def send_en_from_rss(article: dict) -> bool:
     """
     Inglizcha kanalga RSS manbadan bevosita post yuborish.
@@ -723,14 +763,25 @@ def send_en_from_rss(article: dict) -> bool:
         log.warning("send_en_from_rss: title bo'sh — o'tkazildi")
         return False
 
+    # Agar RSS description qisqa bo'lsa — maqoladan to'liq matn olish
+    if len(desc) < 300 and link:
+        log.info(f"  RSS desc qisqa ({len(desc)} harf) — maqola URL dan o'qilmoqda...")
+        full_text = _fetch_article_text(link, max_chars=1200)
+        if len(full_text) > len(desc):
+            desc = full_text
+            log.info(f"  Maqola matni olindu: {len(desc)} harf")
+
     # Matnni 2 qismga bo'lish (jumla1 + jumla2)
     sents = re.split(r'(?<=[.!?…])\s+', desc.strip()) if desc else []
     if len(sents) >= 4:
         mid = len(sents) // 2
         j1 = " ".join(sents[:mid]).strip()
         j2 = " ".join(sents[mid:]).strip()
+    elif sents:
+        j1 = desc[:600]
+        j2 = desc[600:1100] if len(desc) > 600 else ""
     else:
-        j1 = desc[:500]
+        j1 = title
         j2 = ""
 
     # Hashtag — sarlavhadan kalit so'zlar
