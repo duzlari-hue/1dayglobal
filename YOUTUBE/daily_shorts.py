@@ -25,16 +25,20 @@ import edge_tts
 from config import OUTPUT_DIR, TEMP_DIR, VOICES, QUEUE_DIR, YOUTUBE_PLAYLIST
 
 SW, SH    = 1080, 1920
-SEG_DUR   = 12        # Har bir yangilik segmenti (soniya)
-INTRO_DUR = 3         # Intro davomiyligi (soniya)
+SEG_DUR   = 15        # Har bir yangilik segmenti (soniya) — intro yo'q, har biri uzunroq
+INTRO_DUR = 3         # Intro davomiyligi (soniya) — ISHLATILMAYDI
 TRANS_DUR = 0.5       # Tranzitsiya davomiyligi (soniya)
 
-C_BG    = (5,  10, 22)
-C_GOLD  = (240, 165, 0)
-C_RED   = (204,   0, 0)
+# 1DAY GLOBAL brand colors: qora / oq / qizil
+C_BG    = (0,   0,   0)    # Pure black
+C_RED   = (204,  0,   0)   # Brand red
 C_WHITE = (255, 255, 255)
-C_YELLOW= (255, 210, 0)
-C_DARK  = (20,  25, 40)
+C_LGRAY = (160, 160, 160)  # Secondary text
+C_DARK  = (18,  18,  18)   # Slightly lighter black
+
+# Legacy aliases (eski nomlar — o'chirilmaydi, kod buzilmasin)
+C_GOLD   = C_WHITE   # Oltin → oq
+C_YELLOW = C_WHITE   # Sariq → oq
 
 _HERE      = os.path.dirname(os.path.abspath(__file__))
 MUSIC_PATH = os.path.join(_HERE, "assets", "background.mp3")
@@ -302,18 +306,17 @@ def fetch_news_photo(search_queries, keywords_en, out_path):
 # ─────────────────────────────────────────────────────────────
 # Karta: to'liq rasm fon + overlay
 # ─────────────────────────────────────────────────────────────
-DARAJA_COLOR = {"muhim":(220,30,30), "tezkor":(240,140,0), "xabar":(0,100,200)}
+DARAJA_COLOR = {"muhim": C_RED, "tezkor": C_RED, "xabar": C_RED}
 
 def make_card_with_bg(number, sarlavha, daraja, lang, bg_path, out_path):
     """
-    9:16 to'liq karta:
-    - Fon: Pexels rasm (blur yuqori qism, pastda qoraytirilgan zona)
-    - Raqam badge (yuqorida)
-    - Sarlavha (katta, pastda)
+    1DAY GLOBAL brand style: qora fon, oq matn, qizil aksentlar.
+    - Rasm bo'lsa: pastki 60% qoraytirilgan fon
+    - Rasm yo'q: sof qora
+    - Yuqorida: brend satri + raqam
+    - Pastda: katta sarlavha
     """
-    accent = DARAJA_COLOR.get(daraja, (0,100,200))
-
-    # Fon rasmi yuklash va crop
+    # ── Fon ────────────────────────────────────────────────────
     if bg_path and os.path.exists(bg_path):
         try:
             bg = Image.open(bg_path).convert("RGB")
@@ -321,73 +324,89 @@ def make_card_with_bg(number, sarlavha, daraja, lang, bg_path, out_path):
             tgt_r = SW / SH
             src_r = bw / bh
             if src_r > tgt_r:
-                nw = int(bh * tgt_r)
-                x = (bw - nw) // 2
+                nw = int(bh * tgt_r); x = (bw - nw) // 2
                 bg = bg.crop((x, 0, x+nw, bh))
             else:
-                nh = int(bw / tgt_r)
-                y = (bh - nh) // 2
+                nh = int(bw / tgt_r); y = (bh - nh) // 2
                 bg = bg.crop((0, y, bw, y+nh))
             bg = bg.resize((SW, SH), Image.LANCZOS)
+            # Rasmni qoraytirish (fon bo'lib tursin)
+            from PIL import ImageEnhance
+            bg = ImageEnhance.Brightness(bg).enhance(0.45)
         except Exception:
             bg = Image.new("RGB", (SW, SH), C_BG)
     else:
         bg = Image.new("RGB", (SW, SH), C_BG)
 
-    # Yuqori qism blur (raqam badge sohasi)
-    top_blur = bg.crop((0, 0, SW, 420))
-    top_blur = top_blur.filter(ImageFilter.GaussianBlur(radius=12))
-    bg.paste(top_blur, (0, 0))
-
     canvas = bg.copy()
-    draw   = ImageDraw.Draw(canvas)
 
-    # Yuqori qoraytirilgan gradient (raqam uchun joy)
-    for y in range(0, 350):
-        alpha_f = 0.75 * (1 - y/350)
-        ov = Image.new("RGBA", (SW, 1), (0,0,0, int(255*alpha_f)))
-        canvas.paste(ov, (0, y), ov)
+    # ── Pastki qora gradient (sarlavha zonasi) ─────────────────
+    grad_h = 900
+    for gy in range(SH - grad_h, SH):
+        alpha_f = min(1.0, 0.97 * (gy - (SH - grad_h)) / grad_h)
+        ov = Image.new("RGBA", (SW, 1), (0, 0, 0, int(255 * alpha_f)))
+        canvas.paste(ov, (0, gy), ov)
 
-    # Pastki gradient (sarlavha uchun joy)
-    grad_h = 800
-    for y in range(SH - grad_h, SH):
-        alpha_f = 0.92 * (y - (SH-grad_h)) / grad_h
-        ov = Image.new("RGBA", (SW, 1), (5,10,22, int(255*alpha_f)))
-        canvas.paste(ov, (0, y), ov)
+    # ── Yuqori qora panel ──────────────────────────────────────
+    for gy in range(0, 160):
+        alpha_f = 0.92 * (1 - gy / 160)
+        ov = Image.new("RGBA", (SW, 1), (0, 0, 0, int(255 * alpha_f)))
+        canvas.paste(ov, (0, gy), ov)
 
     draw = ImageDraw.Draw(canvas)
 
-    # Chap aksent chiziq
-    draw.rectangle([(0,0),(10,SH)], fill=(*accent, 230))
-    # Pastki oltin chiziq
-    draw.rectangle([(0,SH-10),(SW,SH)], fill=(*C_GOLD,255))
-    # Yuqori oltin chiziq
-    draw.rectangle([(0,0),(SW,8)], fill=(*C_GOLD,200))
+    # ── Qizil aksent chizig'i (chap) ──────────────────────────
+    draw.rectangle([(0, 0), (8, SH)], fill=(*C_RED, 255))
 
-    # Raqam badge
-    bx, by = SW//2, 150
-    r = 75
-    draw.ellipse([(bx-r,by-r),(bx+r,by+r)],
-                 fill=(*accent,240), outline=(*C_GOLD,255), width=4)
-    draw.text((bx, by), str(number), font=_font(90), fill=C_WHITE, anchor="mm")
+    # ── Yuqori qizil chiziq ────────────────────────────────────
+    draw.rectangle([(0, 0), (SW, 6)], fill=(*C_RED, 255))
 
-    # Daraja label
-    dlabel = {"muhim":"MUHIM","tezkor":"TEZKOR","xabar":"YANGILIK"}
-    draw.text((bx, by+100), dlabel.get(daraja,"YANGILIK"),
-              font=_font(30,False), fill=(*C_GOLD,210), anchor="mm")
+    # ── Brend satri ────────────────────────────────────────────
+    brand = {"uz": "1DAY GLOBAL", "ru": "1DAY GLOBAL", "en": "1DAY GLOBAL"}.get(lang, "1DAY GLOBAL")
+    draw.text((SW // 2, 55), brand, font=_font(38), fill=C_WHITE, anchor="mm")
+    draw.text((SW // 2, 100), "THE WORLD  ·  IN ONE DAY",
+              font=_font(20, False), fill=C_LGRAY, anchor="mm")
 
-    # Sarlavha (katta, pastda)
-    wrapped = textwrap.wrap(sarlavha, width=20)[:5]
-    f_title = _font(66)
-    ty = SH - 680
-    for line in wrapped:
-        draw.text((SW//2+3, ty+3), line, font=f_title, fill=(0,0,0,180), anchor="mt")
-        draw.text((SW//2, ty),      line, font=f_title, fill=C_WHITE,   anchor="mt")
-        ty += 76
+    # ── Raqam badge (qizil kvadrat) ────────────────────────────
+    bx, by = SW // 2, 310
+    bsz = 110
+    draw.rectangle([(bx - bsz, by - bsz), (bx + bsz, by + bsz)], fill=C_RED)
+    draw.text((bx, by), str(number), font=_font(110), fill=C_WHITE, anchor="mm")
 
-    # Brend
-    brand = {"uz":"1КУН GLOBAL","ru":"1ДЕНЬ GLOBAL","en":"1DAY GLOBAL"}.get(lang,"1KUN")
-    draw.text((SW//2, SH-28), brand, font=_font(34), fill=(*C_GOLD,220), anchor="mb")
+    # Daraja label (raqam ostida)
+    dlabels = {
+        "uz": {"muhim": "MUHIM", "tezkor": "TEZKOR", "xabar": "YANGILIK"},
+        "ru": {"muhim": "ГЛАВНОЕ", "tezkor": "СРОЧНО", "xabar": "НОВОСТЬ"},
+        "en": {"muhim": "BREAKING", "tezkor": "URGENT", "xabar": "NEWS"},
+    }
+    dlabel = dlabels.get(lang, dlabels["en"]).get(daraja, "NEWS")
+    draw.text((bx, by + bsz + 38), dlabel,
+              font=_font(28, False), fill=C_LGRAY, anchor="mm")
+
+    # ── Grid chiziqlar (subtle brand element) ──────────────────
+    for gx in range(0, SW, 90):
+        draw.line([(gx, 160), (gx, SH - 200)], fill=(30, 30, 30), width=1)
+
+    # ── Sarlavha (katta, pastki uchinchi) ──────────────────────
+    wrapped = textwrap.wrap(sarlavha, width=18)[:4]
+    f_title = _font(72)
+    # Sarlavha vertikal markazlash uchun umumiy balandlik
+    total_h = len(wrapped) * 84
+    ty = SH - 200 - total_h
+    for i, line in enumerate(wrapped):
+        # Soya
+        draw.text((SW // 2 + 2, ty + 2), line, font=f_title,
+                  fill=(0, 0, 0, 200), anchor="mt")
+        # Asosiy matn
+        draw.text((SW // 2, ty), line, font=f_title,
+                  fill=C_WHITE, anchor="mt")
+        ty += 84
+
+    # ── Pastki qizil chiziq + brend ────────────────────────────
+    draw.rectangle([(0, SH - 8), (SW, SH)], fill=(*C_RED, 255))
+    today_str = date.today().strftime("%d.%m.%Y")
+    draw.text((SW - 20, SH - 50), today_str,
+              font=_font(26, False), fill=C_LGRAY, anchor="rm")
 
     canvas.save(out_path, "JPEG", quality=93)
     return out_path
@@ -438,6 +457,13 @@ async def _tts_async(text, voice, rate, out_path):
 
 def make_tts(text, out_path, lang="uz"):
     vcfg  = VOICES.get(lang, VOICES["uz"])["default"]
+    # RU: kirillmi tekshiruv (matn bo'sh bo'lsa ovoz chiqmaydi)
+    if lang == "ru" and not _is_cyr(text):
+        print(f"     ⚠️  RU TTS: matn kirill emas — o'tkazildi")
+        return False
+    if not text or not text.strip():
+        print(f"     ⚠️  TTS: matn bo'sh")
+        return False
     try:
         asyncio.run(_tts_async(text, vcfg["voice"], vcfg.get("rate","-5%"), out_path))
     except Exception as e:
@@ -445,11 +471,26 @@ def make_tts(text, out_path, lang="uz"):
         return False
     return os.path.exists(out_path)
 
-def pad_audio_to(in_path, out_path, duration):
+
+def _get_audio_dur(path: str) -> float:
+    """Audio faylning haqiqiy davomiyligini olish (ffprobe)."""
+    try:
+        r = subprocess.run(
+            ["ffprobe","-v","error","-show_entries","format=duration",
+             "-of","csv=p=0", path],
+            capture_output=True, text=True, timeout=10
+        )
+        return float(r.stdout.strip())
+    except Exception:
+        return 0.0
+
+
+def pad_audio_to(in_path, out_path, min_duration):
+    """Audio ni min_duration gacha to'ldirish — lekin kesmaydi (uzunroq bo'lsa ham saqlanadi)."""
     subprocess.run([
-        "ffmpeg","-y","-i",in_path,
-        "-af", f"apad=pad_dur={duration}",
-        "-t", str(duration),
+        "ffmpeg","-y","-i", in_path,
+        "-af", f"apad=pad_dur={min_duration}",
+        # "-t" YO'Q — TTS min_duration dan uzun bo'lsa ham kesmaydi
         "-c:a","aac","-b:a","96k", out_path
     ], capture_output=True, timeout=30)
     return os.path.exists(out_path)
@@ -471,28 +512,32 @@ def build_tts_text(number, sarlavha, lang):
         "ru": ["Первая","Вторая","Третья","Четвёртая","Пятая"],
         "en": ["First","Second","Third","Fourth","Fifth"],
     }
-    ord_word = ordinals.get(lang, ordinals["uz"])[number-1]
+    idx      = max(0, min(number-1, 4))
+    ord_word = ordinals.get(lang, ordinals["uz"])[idx]
     sfx      = {"uz":" yangilik.","ru":" новость.","en":" news."}
     text     = ord_word + sfx.get(lang," yangilik.")
 
     if sarlavha:
         if lang == "uz":
-            # uz-UZ-MadinaNeural LOTIN skriptni kutadi
-            # Kiriллча sarlavha → lotin konvertatsiya
+            # uz-UZ-MadinaNeural LOTIN skript kutadi
             if _is_cyr(sarlavha):
                 tts_sarlavha = _cyr2lat_uz(sarlavha)
             elif _is_latin(sarlavha):
                 tts_sarlavha = sarlavha
             else:
-                tts_sarlavha = ""
+                tts_sarlavha = _cyr2lat_uz(sarlavha)  # harholda convert
             if tts_sarlavha:
                 text += f" {tts_sarlavha}."
         elif lang == "ru":
+            # RU: faqat kirill → diktor o'qiydi
             if _is_cyr(sarlavha):
                 text += f" {sarlavha}."
+            # Lotin bo'lsa — sarlavha qo'shilmaydi, faqat "Первая новость"
         elif lang == "en":
             if _is_latin(sarlavha):
                 text += f" {sarlavha}."
+            else:
+                text += f" {sarlavha}."   # EN uchun istalgan skript
     return text
 
 def build_intro_text(lang):
@@ -530,10 +575,10 @@ def image_to_video(img_path, audio_path, duration, out_path):
 # ─────────────────────────────────────────────────────────────
 # xfade tranzitsiyalar bilan concat
 # ─────────────────────────────────────────────────────────────
-def concat_with_transitions(parts, out_path):
+def concat_with_transitions(parts, out_path, durs=None):
     """
     N ta segment → xfade slide tranzitsiyalar → birlashtirilgan video.
-    Barcha segmentlar bir xil SEG_DUR (intro: INTRO_DUR).
+    durs: har segment uchun haqiqiy davomiylik (ixtiyoriy, bo'lmasa SEG_DUR)
     """
     n = len(parts)
     if n == 0: return False
@@ -545,8 +590,10 @@ def concat_with_transitions(parts, out_path):
     for p in parts:
         cmd += ["-i", p]
 
-    # Segmentlar davomiyligi
-    durs = [float(INTRO_DUR)] + [float(SEG_DUR)] * (n - 1)
+    # Har segment uchun davomiylik (berilmasa SEG_DUR)
+    if not durs or len(durs) != n:
+        durs = [float(SEG_DUR)] * n
+    durs = [float(d) for d in durs]
 
     fc_v = []
     fc_a = []
@@ -690,9 +737,9 @@ def upload_daily_to_youtube(video_path: str, news: list, lang: str) -> str | Non
         return None
 
     try:
-        youtube = youtube_auth()
+        youtube = youtube_auth(lang)
     except Exception as e:
-        print(f"  ⚠️  YouTube auth xato: {e}")
+        print(f"  ⚠️  YouTube auth xato ({lang}): {e}")
         return None
 
     today_str = date.today().strftime("%d.%m.%Y")
@@ -823,6 +870,12 @@ def load_today_news(lang="uz", count=5):
         sarlavha = _fix_terms(d.get("sarlavha", {}).get(lang, ""))
         if not sarlavha or sarlavha in seen_exact:
             continue
+
+        # RU: lotin sarlavha — o'tkazib yuborish (ekranda xunuk ko'rinadi)
+        if lang == "ru" and not _is_cyr(sarlavha):
+            print(f"  ⏭  RU sarlavha lotin (skip): {sarlavha[:50]}")
+            continue
+
         seen_exact.add(sarlavha)
 
         # Allaqachon ishlatilganmi?
@@ -861,8 +914,8 @@ def load_today_news(lang="uz", count=5):
 # Asosiy pipeline
 # ─────────────────────────────────────────────────────────────
 def make_daily_shorts(lang="uz"):
-    total_est = INTRO_DUR + 5*SEG_DUR - 5*TRANS_DUR
-    print(f"\n📰 Daily Shorts ({lang.upper()}) — ~{total_est:.0f} sek")
+    total_est = 5 * SEG_DUR - 4 * TRANS_DUR   # intro yo'q
+    print(f"\n📰 Daily Shorts ({lang.upper()}) — ~{total_est:.0f} sek (intro yo'q)")
     os.makedirs(TEMP_DIR,   exist_ok=True)
     os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -878,32 +931,25 @@ def make_daily_shorts(lang="uz"):
         print(f"    {i}. [{n['daraja']:7}] {n['sarlavha'][:55]}")
 
     ts    = datetime.now().strftime("%Y%m%d_%H%M%S")
-    parts = []
+    parts     = []
+    seg_durs  = []   # Har segment uchun haqiqiy davomiylik
 
-    # ── Intro ────────────────────────────────────────────────
-    print("  → Intro...")
-    intro_img = os.path.join(TEMP_DIR, f"ds_intro_{ts}.jpg")
-    intro_raw = os.path.join(TEMP_DIR, f"ds_intro_{ts}_r.aac")
-    intro_aud = os.path.join(TEMP_DIR, f"ds_intro_{ts}.aac")
-    intro_vid = os.path.join(TEMP_DIR, f"ds_intro_{ts}.mp4")
+    MIN_SEG = 12     # Minimal segment davomiyligi (soniya)
+    MAX_SEG = 35     # Maksimal segment davomiyligi (soniya)
 
-    make_intro_card(lang, intro_img)
-    if make_tts(build_intro_text(lang), intro_raw, lang):
-        pad_audio_to(intro_raw, intro_aud, INTRO_DUR)
-    else:
-        make_silence(INTRO_DUR, intro_aud)
-    aud = intro_aud if os.path.exists(intro_aud) else (make_silence(INTRO_DUR, intro_aud) or intro_aud)
-
-    if image_to_video(intro_img, intro_aud, INTRO_DUR, intro_vid):
-        parts.append(intro_vid)
-        print(f"     ✓ Intro ({INTRO_DUR}s)")
+    # ── INTRO YO'Q — darhol birinchi yangilikdan boshlanadi ──
 
     # ── Har bir yangilik ─────────────────────────────────────
     for i, item in enumerate(news, 1):
         print(f"  → Yangilik {i}: {item['sarlavha'][:50]}...")
 
         sarlavha = item["sarlavha"]
+        jumla    = item.get("jumla", "")
         daraja   = item["daraja"]
+
+        # RU: lotin sarlavha bo'lsa — JSON da boshqa til qarab ko'rish
+        if lang == "ru" and not _is_cyr(sarlavha):
+            print(f"     ⚠️  RU sarlavha lotin — o'tkazildi yoki fon ishlatiladi")
 
         seg_photo = os.path.join(TEMP_DIR, f"ds_ph_{ts}_{i}.jpg")
         seg_card  = os.path.join(TEMP_DIR, f"ds_card_{ts}_{i}.jpg")
@@ -927,24 +973,42 @@ def make_daily_shorts(lang="uz"):
         if not photo_ok:
             print(f"     ℹ️  Rasm topilmadi — qora fon")
 
-        # 2. Karta (rasm + overlay)
+        # 2. Karta (rasm + brand overlay)
         make_card_with_bg(i, sarlavha, daraja, lang,
                           seg_photo if photo_ok else None,
                           seg_card)
 
-        # 3. TTS: raqam + sarlavha
+        # 3. TTS: raqam + sarlavha + JUMLA (to'liqroq naratsiya)
         tts_text = build_tts_text(i, sarlavha, lang)
-        if make_tts(tts_text, seg_raw, lang):
-            pad_audio_to(seg_raw, seg_aud, SEG_DUR)
-        else:
-            make_silence(SEG_DUR, seg_aud)
-        if not os.path.exists(seg_aud):
-            make_silence(SEG_DUR, seg_aud)
+        # Jumla bo'lsa — qo'shish (to'liq gapiradi)
+        if jumla and len(jumla.strip()) > 10:
+            if lang == "uz" and _is_latin(jumla):
+                tts_text += f" {jumla.strip()}"
+            elif lang == "ru" and _is_cyr(jumla):
+                tts_text += f" {jumla.strip()}"
+            elif lang == "en":
+                tts_text += f" {jumla.strip()}"
 
-        # 4. Rasm → video segment
-        if image_to_video(seg_card, seg_aud, SEG_DUR, seg_vid):
+        tts_ok = make_tts(tts_text, seg_raw, lang)
+
+        # Haqiqiy TTS davomiyligini o'lchash
+        actual_tts_dur = _get_audio_dur(seg_raw) if tts_ok else 0.0
+        # Segment = TTS + 1.5s oxirida pauza, min MIN_SEG, max MAX_SEG
+        seg_dur = min(max(actual_tts_dur + 1.5, MIN_SEG), MAX_SEG)
+        print(f"     🎙 TTS: {actual_tts_dur:.1f}s → segment: {seg_dur:.1f}s")
+
+        if tts_ok:
+            pad_audio_to(seg_raw, seg_aud, seg_dur)
+        else:
+            make_silence(seg_dur, seg_aud)
+        if not os.path.exists(seg_aud):
+            make_silence(seg_dur, seg_aud)
+
+        # 4. Rasm → video segment (haqiqiy davomiylik bilan)
+        if image_to_video(seg_card, seg_aud, seg_dur, seg_vid):
             parts.append(seg_vid)
-            print(f"     ✓ Segment {i} ({SEG_DUR}s)")
+            seg_durs.append(seg_dur)
+            print(f"     ✓ Segment {i} ({seg_dur:.1f}s)")
         else:
             print(f"     ⚠️  Segment {i} yaratilmadi")
 
@@ -953,7 +1017,7 @@ def make_daily_shorts(lang="uz"):
 
     # ── xfade concat ─────────────────────────────────────────
     concat_vid = os.path.join(TEMP_DIR, f"ds_raw_{ts}.mp4")
-    if not concat_with_transitions(parts, concat_vid):
+    if not concat_with_transitions(parts, concat_vid, seg_durs):
         print("  ⚠️  Concat muvaffaqiyatsiz"); return None
 
     # Ishlatilgan yangiliklar saqlanadi (keyingi ishga tushirishda o'tkazish uchun)

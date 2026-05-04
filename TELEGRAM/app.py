@@ -26,7 +26,44 @@ from config import TASHKENT, SCHEDULE_HOURS, TELEGRAM_CHANNEL_UZ
 from rss import fetch_rss_news, save_seen_link
 from translator import groq_translate
 from telegram_bot import send_all_languages, send_daily_digest_all
-from photo_of_day import run_photo_of_day
+from photo_of_day import run_photo_of_day, run_hayrat_nigoh, run_kun_fotosi
+
+# ── YouTube special shorts (YOUTUBE papkasidan import) ─────────
+import pathlib as _pl_app
+import sys as _sys_app
+import importlib.util as _ilu
+_YT_DIR = str(_pl_app.Path(__file__).parent.parent / "YOUTUBE")
+if _YT_DIR not in _sys_app.path:
+    _sys_app.path.insert(0, _YT_DIR)
+try:
+    # sys.modules['config'] da TELEGRAM config cached — YOUTUBE config bilan vaqtincha almashtirish
+    _tg_config_cached = _sys_app.modules.get("config")
+    _yt_config_path   = str(_pl_app.Path(__file__).parent.parent / "YOUTUBE" / "config.py")
+    _yt_config_spec   = _ilu.spec_from_file_location("config", _yt_config_path)
+    _yt_config_mod    = _ilu.module_from_spec(_yt_config_spec)
+    _sys_app.modules["config"] = _yt_config_mod
+    _yt_config_spec.loader.exec_module(_yt_config_mod)
+
+    from special_shorts import (
+        run_numbers_short, run_history_short,
+        run_fakt_short, run_breaking_short, run_top5_short,
+    )
+    _SHORTS_OK = True
+except Exception as _e:
+    log_pre = logging.getLogger(__name__)
+    log_pre.warning(f"⚠️  special_shorts import muvaffaqiyatsiz: {_e}")
+    _SHORTS_OK = False
+    def run_numbers_short(*a, **kw): pass
+    def run_history_short(*a, **kw): pass
+    def run_fakt_short(*a, **kw): pass
+    def run_breaking_short(*a, **kw): pass
+    def run_top5_short(*a, **kw): pass
+finally:
+    # TELEGRAM config ni qayta tiklash
+    if _tg_config_cached is not None:
+        _sys_app.modules["config"] = _tg_config_cached
+    else:
+        _sys_app.modules.pop("config", None)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -130,7 +167,7 @@ def _run_pipeline_inner():
             "script_uz":   "", "script_ru": "",
             "script_en":   _desc,
             "daraja":      "xabar",
-            "hashtag_uz":  "#Янгилик #1КУН",
+            "hashtag_uz":  "#Yangilik #1KUN",
             "hashtag_ru":  "#Новости #1День",
             "hashtag_en":  "#News #World #1Day",
             "keywords_en": article.get("title", "").split()[:5],
@@ -151,6 +188,30 @@ def _run_pipeline_inner():
 
     # 5. YouTube queue — yangilikni qo'shish
     _save_to_youtube_queue(d, article)
+
+    # 6. YouTube Shorts — har bir yangilikdan keyin (soatga qarab navbat bilan)
+    if _SHORTS_OK:
+        _art_for_short = {
+            "title":       article.get("title", ""),
+            "description": article.get("description", ""),
+        }
+        _cur_hour = datetime.now(TASHKENT).hour
+        # Soat bo'yicha navbatma-navbat:  08→fakt, 11→breaking, 14→numbers, 17→fakt, 20→breaking
+        _short_rotation = {
+            8:  ("fakt",     run_fakt_short),
+            11: ("breaking", run_breaking_short),
+            14: ("numbers",  run_numbers_short),
+            17: ("fakt",     run_fakt_short),
+            20: ("breaking", run_breaking_short),
+        }
+        _short_fn_name, _short_fn = _short_rotation.get(
+            _cur_hour, ("numbers", run_numbers_short)
+        )
+        try:
+            log.info(f"▶ Short format: {_short_fn_name.upper()} [{_cur_hour}:00]")
+            _short_fn(article=_art_for_short)
+        except Exception as _se:
+            log.warning(f"⚠️  Short [{_short_fn_name}] xato: {_se}")
 
     log.info("✅ Pipeline tugadi\n")
 
@@ -234,6 +295,21 @@ def run_daily_digest():
                 })
 
     send_daily_digest_all(articles_by_lang)
+
+    # TOP-5 TEZKOR shorti — digest bilan bir vaqtda (raw article titles)
+    if _SHORTS_OK:
+        try:
+            _arts_for_top5 = [
+                {
+                    "title":       d.get("sarlavha_en") or d.get("sarlavha_uz", ""),
+                    "description": d.get("jumla1_en")   or d.get("jumla1_uz", ""),
+                }
+                for d in _DAILY_BUFFER[-5:]
+            ]
+            run_top5_short(articles=_arts_for_top5)
+        except Exception as _te:
+            log.warning(f"⚠️  Top-5 short xato: {_te}")
+
     _DAILY_BUFFER.clear()
     log.info("✅ Kunlik digest yuborildi, bufer tozalandi")
 
@@ -263,23 +339,66 @@ def main():
         id="daily_digest",
         misfire_grace_time=300,
     )
-    # Kunning eng yaxshi fotosi — tushlik 12:00
+    # Dunyoga Hayrat Nigohi — 12:00
     scheduler.add_job(
-        run_photo_of_day,
+        run_hayrat_nigoh,
         CronTrigger(hour=12, minute=0, timezone=TASHKENT),
-        id="photo_of_day",
+        id="hayrat_nigoh",
         misfire_grace_time=600,
     )
+    # Kun Fotosi — kechki 20:00
+    scheduler.add_job(
+        run_kun_fotosi,
+        CronTrigger(hour=20, minute=0, timezone=TASHKENT),
+        id="kun_fotosi",
+        misfire_grace_time=600,
+    )
+    # Bugun Tarixda shorti — 10:00
+    if _SHORTS_OK:
+        scheduler.add_job(
+            run_history_short,
+            CronTrigger(hour=10, minute=0, timezone=TASHKENT),
+            id="history_short",
+            misfire_grace_time=600,
+        )
     log.info(f"⏰ Yangiliklar: {', '.join(str(h)+':00' for h in SCHEDULE_HOURS)}")
     log.info("⏰ Kunlik digest: 21:00 (Toshkent)")
-    log.info("⏰ Kunning fotosi: 12:00 (Toshkent)")
+    log.info("⏰ Dunyoga Hayrat Nigohi: 12:00 (Toshkent)")
+    log.info("⏰ Kun Fotosi: 20:00 (Toshkent)")
+    if _SHORTS_OK:
+        log.info("⏰ Bugun Tarixda shorti: 10:00 (Toshkent)")
     log.info("Ctrl+C — to'xtatish\n")
 
     if "--now" in sys.argv or "--once" in sys.argv:
         run_pipeline()
         return
     if "--photo" in sys.argv:
-        run_photo_of_day()
+        run_hayrat_nigoh(force=True)
+        return
+    if "--kunfoto" in sys.argv:
+        run_kun_fotosi(force=True)
+        return
+    if "--history" in sys.argv:
+        run_history_short()
+        return
+    if "--fakt" in sys.argv:
+        run_fakt_short(article={"title": "World news today", "description": ""})
+        return
+    if "--breaking" in sys.argv:
+        run_breaking_short(article={"title": "World news today", "description": ""})
+        return
+    if "--top5" in sys.argv:
+        run_top5_short(articles=[{"title": f"News story #{i}", "description": ""} for i in range(1, 6)])
+        return
+    if "--numbers" in sys.argv:
+        # test uchun namunaviy yangilik
+        run_numbers_short(article={
+            "title": sys.argv[sys.argv.index("--numbers")+1]
+                     if "--numbers" in sys.argv and sys.argv.index("--numbers")+1 < len(sys.argv)
+                        and not sys.argv[sys.argv.index("--numbers")+1].startswith("--")
+                     else "World economic summit 2026",
+            "description": ""
+        })
         return
 
     scheduler.start()

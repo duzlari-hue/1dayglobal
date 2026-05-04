@@ -124,10 +124,17 @@ def _is_valid_title(text: str, lang: str = "uz") -> bool:
     words = t.split()
     if len(words) < 3:      # kamida 3 so'z
         return False
-    # UZ sarlavha — kiriллcha harflar bo'lishi shart
+    # UZ sarlavha — lotin alifbosida bo'lishi kerak (Kirill EMAS)
     if lang == "uz":
-        if not any(c in t for c in _CYR):
-            return False
+        pass  # Lotin qabul qilinadi
+    # RU sarlavha — kamida 40% harflari kirill bo'lishi kerak
+    # ("Voennaya sila ne v sostoyanii..." kabi lotin translit — yaroqsiz)
+    if lang == "ru":
+        _letters = [c for c in t if c.isalpha()]
+        if _letters:
+            _cyr_n = sum(1 for c in _letters if c in _CYR)
+            if _cyr_n / len(_letters) < 0.40:
+                return False  # asosan lotin — qayta so'rash kerak
     return True
 
 
@@ -277,7 +284,7 @@ def _is_fake_hashtag(text: str) -> bool:
 def _gen_hashtags(keywords_en: list, lang: str, daraja: str = "xabar") -> str:
     """Kalit so'zlardan oddiy hashtag yaratish."""
     # Asosiy brend teglari
-    brand = {"uz": "#1КУН #Янгилик", "ru": "#1День #Новости", "en": "#1Day #News"}
+    brand = {"uz": "#1KUN #Yangilik", "ru": "#1День #Новости", "en": "#1Day #News"}
     base = brand.get(lang, "#News")
 
     # keyword_en dan birinchi 2 ta nom (bosh harfli) ni hashtag qilish
@@ -290,37 +297,41 @@ def _gen_hashtags(keywords_en: list, lang: str, daraja: str = "xabar") -> str:
             break
 
     if daraja == "muhim":
-        base = {"uz": "#МУХИМ #1КУН", "ru": "#ВАЖНО #1День", "en": "#BREAKING #1Day"}.get(lang, base)
+        base = {"uz": "#MUHIM #1KUN", "ru": "#ВАЖНО #1День", "en": "#BREAKING #1Day"}.get(lang, base)
     elif daraja == "tezkor":
-        base = {"uz": "#Тезкор #1КУН", "ru": "#Срочно #1День", "en": "#Urgent #1Day"}.get(lang, base)
+        base = {"uz": "#Tezkor #1KUN", "ru": "#Срочно #1День", "en": "#Urgent #1Day"}.get(lang, base)
 
     parts = kw_tags + [base]
     return " ".join(parts[:5])
 
 
 def _uz_from_russian(ru_text: str, context_en: str = "") -> str:
-    """Ruscha matnni o'zbek kirilliga tarjima qilish (EN→UZ dan yaxshiroq).
-    RU→UZ juftligi model uchun EN→UZ dan ancha tanish."""
+    """Ruscha matnni o'zbek LOTIN alifbosiga tarjima qilish.
+    YouTube va Telegram UZ kanal uchun faqat LOTIN."""
     if not ru_text or not ru_text.strip():
         return ""
     prompt = (
-        "Переведи следующий русский текст на узбекский язык КИРИЛЛИЦЕЙ (ўзбек кирилл алифбоси).\n"
-        "Используй узбекскую лексику (НЕ русские слова!). Sentence case — только первое слово "
-        "и имена собственные с большой буквы.\n"
-        "Пример: 'Министр обороны убит в результате нападения' → "
-        "'Мудофаа вазири ҳужумда ҳалок бўлди'\n\n"
-        f"Текст: {ru_text}\n\n"
-        "Верни ТОЛЬКО переведённый текст на узбекском кириллицей, без пояснений."
+        "Translate the following Russian text into Uzbek LATIN script (lotin alifbosi).\n"
+        "Use ONLY Latin letters (a-z, o', g', sh, ch, ng). NO Cyrillic letters.\n"
+        "Use Uzbek vocabulary (NOT Russian words).\n"
+        "Name equivalents: Украина=Ukraina, Россия=Rossiya, Израиль=Isroil, "
+        "Иран=Eron, Газа=G'azo, Трамп=Tramp, Байден=Bayden, Путин=Putin, "
+        "Зеленский=Zelenskiy, Нетаньяху=Netanyaxu, Москва=Moskva, Лондон=London.\n"
+        "Sentence case only.\n\n"
+        f"Russian text: {ru_text}\n\n"
+        "Return ONLY the translated Uzbek Latin text, nothing else."
     )
     try:
-        result = groq_ask(prompt, max_tokens=300).strip()
+        result = groq_ask(prompt, max_tokens=400).strip()
         result = result.strip('"\'«»„"')
-        # Tekshirish: kirill bo'lishi kerak
-        if any(c in result for c in _CYR):
-            result = _apply_uz_places(result)
-            result = _apply_uz_terms(result)
+        # Tekshirish: asosan lotin bo'lishi kerak (kirill emas)
+        cyr_count = sum(1 for c in result if c in _CYR)
+        if cyr_count > 5:
+            log.warning(f"_uz_from_russian: kirill harflar bor ({cyr_count}) — o'tkazildi")
+            return ""
+        if result and len(result.split()) >= 2:
             return _fix_case(result)
-        log.warning(f"_uz_from_russian: kirill yo'q — '{result[:50]}'")
+        log.warning(f"_uz_from_russian: natija bo'sh — '{result[:50]}'")
         return ""
     except Exception as e:
         log.warning(f"_uz_from_russian xato: {e}")
@@ -331,16 +342,10 @@ def _fix_title_only(original_en: str, lang: str, source_ru: str = "") -> str:
     """Faqat sarlavhani alohida qayta so'rash (qisqa prompt).
     UZ uchun: source_ru mavjud bo'lsa RU->UZ (ancha yaxshi) ishlatiladi."""
 
-    # UZ: Ruscha manba bo'lsa — RU->UZ yo'li (ancha sifatli)
-    if lang == "uz" and source_ru and source_ru.strip():
-        result = _uz_from_russian(source_ru[:150], context_en=original_en)
-        if result and _is_valid_title(result, "uz"):
-            log.info(f"  _fix_title_only UZ (RU->UZ): '{result[:60]}'")
-            return result
-        # Muvaffaqiyatsiz — quyida standart yo'l sinab ko'riladi
+    # UZ: to'g'ridan-to'g'ri inglizchadan Lotin o'zbek (Kirill EMAS)
 
     lang_map = {
-        "uz": "Uzbek CYRILLIC script (o'zbek kirillida). 5-8 so'z, sentence case. Faqat birinchi so'z va xos ismlar bosh harf. Ruscha so'z ishlatma.",
+        "uz": "Uzbek LATIN script (o'zbek lotin alifbosi). 5-8 so'z, sentence case. Faqat birinchi so'z va xos ismlar bosh harf. Ruscha so'z ishlatma. Misol: 'Tramp Yevropaga yangi boj soliqlarini e'lon qildi'.",
         "ru": "Russian. 5-8 words, sentence case. Only first word and proper nouns capitalized.",
         "en": "English. 5-8 words, sentence case. Only first word and proper nouns capitalized.",
     }
@@ -372,11 +377,7 @@ def _fix_title_only(original_en: str, lang: str, source_ru: str = "") -> str:
         # Tirnoq va germetik belgilarni tozalash
         result = result.strip('"\'«»„"')
         if lang == "uz":
-            # Lotin bo'lsa — kirillga
-            if not any(c in result for c in _CYR):
-                result = lat2cyr(result)
-            result = _apply_uz_places(result)
-            result = _apply_uz_terms(result)
+            # Lotin qoladi — kirillga O'TKAZMAYMIZ
             result = _fix_case(result)
         else:
             result = _fix_case(result)
@@ -449,10 +450,12 @@ def _ask_openrouter(prompt, max_tokens=2500) -> str:
     }
     # Bepul modellar avval sinab ko'riladi (404 xato bo'lsa — keyingiga o'tamiz)
     free_models = [
-        "meta-llama/llama-3.3-70b-instruct:free",  # Tasdiqlangan! (429 = mavjud)
-        "deepseek/deepseek-r1:free",               # DeepSeek R1 — kuchli, bepul
-        "deepseek/deepseek-chat-v3-0324:free",     # DeepSeek V3
-        "mistralai/mistral-7b-instruct:free",      # Klassik bepul model
+        "meta-llama/llama-3.3-70b-instruct:free",   # Eng kuchli bepul
+        "google/gemma-3-27b-it:free",               # Google Gemma 3 27B
+        "qwen/qwen3-8b:free",                       # Alibaba Qwen 3
+        "google/gemma-2-9b-it:free",                # Google Gemma 2 9B
+        "microsoft/phi-3-mini-128k-instruct:free",  # Microsoft Phi-3
+        "mistralai/mistral-7b-instruct:free",       # Mistral (eski, lekin ishonchli)
     ]
     paid_models = [
         "anthropic/claude-3-5-haiku",              # Kredit kerak (so'nggi chora)
@@ -546,9 +549,11 @@ def _ask_groq(prompt, max_tokens=2500) -> str:
     if not GROQ_API_KEY:
         raise Exception("GROQ_API_KEY yo'q")
     models = [
-        "llama-3.3-70b-versatile",   # Eng kuchli bepul model
-        "llama3-70b-8192",           # Klassik Llama 3
-        "mixtral-8x7b-32768",        # Mixtral (kontekst katta)
+        "llama-3.3-70b-versatile",       # Eng kuchli (rate limit bo'lsa keyingisi)
+        "llama-3.1-70b-versatile",       # Llama 3.1 70B
+        "llama3-groq-70b-8192-tool-use-preview",  # Tool-use versiya
+        "gemma2-9b-it",                  # Google Gemma 2 (Groq da mavjud)
+        "llama-3.1-8b-instant",          # Tez, kichik (oxirgi chora)
     ]
     for model in models:
         try:
@@ -672,29 +677,29 @@ def groq_translate(title, description, source):
 News title: {title}
 News details: {description}
 
-⚠️ CRITICAL: sarlavha_uz, jumla1_uz, jumla2_uz, location_uz, hashtag_uz fields MUST be in Uzbek CYRILLIC script.
-DO NOT write English in these fields. TRANSLATE everything into Uzbek Cyrillic.
-Example: "Six months after ceasefire" → "Оташбас бошланганидан олти ой ўтгач"
+⚠️ ?? CRITICAL: sarlavha_uz, jumla1_uz, jumla2_uz, location_uz, hashtag_uz fields MUST be in Uzbek LATIN script.
+DO NOT use Cyrillic or English in these fields. Write ONLY in Uzbek Latin alphabet (o'zbek lotin yozuvi).
+Example: "Six months after ceasefire" ? "O?t ochishni to?xtatishdan olti oy o?tgach"
 
 Return ONLY valid JSON, no extra text, no markdown:
 {{
-  "sarlavha_uz": "⚠️ ФАҚАТ ЎЗБЕК КИРИЛЛ АЛИФБОСИДА — инглизча ёзма! 5-8 сўз, sentence case. Намуна: 'Трамп Европага янги божхона солиғини эълон қилди'. Trump=Трамп, Biden=Байден, NATO=НАТО, fumes=ғазабланди, rant=танқид",
-  "jumla1_uz": "⚠️ ФАҚАТ ЎЗБЕК КИРИЛЛ — инглизча ёзма! Воқеанинг асосий мазмуни батафсил, 4-5 жумла. Нима бўлди, қаерда, ким, нима учун — барчасини ёз. Тафсилотлар ва контекст қўш.",
-  "jumla2_uz": "⚠️ ФАҚАТ ЎЗБЕК КИРИЛЛ — инглизча ёзма! Қўшимча муҳим тафсилотлар, 4-5 жумла. Натижалар, реакциялар, тарихий фон, эксперт фикрлари.",
+  "sarlavha_uz": "⚠️ O'ZBEK LOTIN ALIFBOSIDA — inglizcha yozma! 5-8 so'z, sentence case. Misol: 'Tramp Yevropaga yangi boj soliqlarini e'lon qildi'. Trump=Tramp, Biden=Bayden, NATO=NATO, Zelensky=Zelenskiy",
+  "jumla1_uz": "⚠️ O'ZBEK LOTIN alifbosida — inglizcha yozma! Voqeaning asosiy mazmuni batafsil, 4-5 jumla. Nima bo'ldi, qayerda, kim, nima uchun — barchasini yoz. Tafsilotlar va kontekst qo'sh.",
+  "jumla2_uz": "⚠️ O'ZBEK LOTIN alifbosida — inglizcha yozma! Qo'shimcha muhim tafsilotlar, 4-5 jumla. Natijalar, reaktsiyalar, tarixiy fon, ekspert fikrlari.",
   "sarlavha_ru": "Заголовок 5-8 слов на РУССКОМ языке (не на английском!), sentence case. Пример: 'Трамп объявил новые пошлины для Европы'",
   "jumla1_ru": "⚠️ ТОЛЬКО РУССКИЙ ЯЗЫК — не пиши по-английски! Главное событие подробно, 4-5 предложений. Что произошло, где, кто, почему — всё подробно.",
   "jumla2_ru": "⚠️ ТОЛЬКО РУССКИЙ ЯЗЫК — не пиши по-английски! Дополнительные детали, 4-5 предложений. Последствия, реакции, исторический контекст.",
   "sarlavha_en": "English headline 5-8 words, sentence case. Example: 'Trump announces new tariffs on European goods'",
   "jumla1_en": "Main event detailed, 4-5 sentences in English. What happened, where, who, why — full context.",
   "jumla2_en": "Additional details 4-5 sentences. Consequences, reactions, historical background.",
-  "script_uz": "[450-500 so'z, SOF O'ZBEK LOTIN tilida — bu TTS uchun. Intro/outro yozma. Ruscha so'z EMAS. Xorijiy nomlar: Trump=Tramp, Biden=Bayden, Netanyahu=Netanyaxu. Yangilik mazmunini, kontekstini, tarixini va tafsilotlarini yoz.]",
-  "script_ru": "[450-500 слов на русском языке. Без вступления и заключения типа 'В эфире...'. Добавь контекст, историю, детали события.]",
-  "script_en": "[450-500 words in English. No intro/outro phrases. Add context, background and details about the event.]",
+  "script_uz": "[450-500 so'z, SOF O'ZBEK LOTIN tilida — bu TTS uchun. Intro/outro yozma. Sarlavhani takrorlaMA — skript sarlavha BILAN emas, voqea KONTEKSTI yoki SABABI bilan boshlansin. Ruscha so'z EMAS. Xorijiy nomlar: Trump=Tramp, Biden=Bayden, Netanyahu=Netanyaxu. Yangilik mazmunini, kontekstini, tarixini va tafsilotlarini yoz.]",
+  "script_ru": "[450-500 слов на русском языке. Без вступления и заключения типа 'В эфире...'. НЕ ПОВТОРЯЙ заголовок в начале — начинай с контекста, истории вопроса или причин события. Добавь контекст, историю, детали события.]",
+  "script_en": "[450-500 words in English. No intro/outro phrases. DO NOT repeat the headline at the start — begin with context, background or reasons behind the event. Add context, background and details about the event.]",
   "daraja": "muhim OR tezkor OR xabar",
-  "hook_uz": "Thumbnail учун қисқа ЎЗБЕК КИРИЛЛ жумла, 3-5 сўз, ҳайратланарли ёки шошилинч. Намуна: 'Дунё ларзага келди!' ёки 'Ҳаммаси ўзгарди'",
+  "hook_uz": "Thumbnail uchun qisqa O'ZBEK LOTIN jumla, 3-5 so'z, hayratlanarli yoki shoshilinch. Misol: 'Dunyo larzaga keldi!' yoki 'Hamma narsa o'zgardi'",
   "hook_ru": "Короткая фраза для thumbnail 3-5 слов, интригующая. Пример: 'Мир изменился навсегда!' или 'Это меняет всё'",
   "hook_en": "Short thumbnail hook 3-5 words, urgent/intriguing. Example: 'World shocked!' or 'Everything changes now'",
-  "hashtag_uz": "3-5 та мавзуга оид ҳэштег ўзбек кирилл тилида. Мисол: '#Трамп #АҚШ #Иқтисодиёт #1КУН'. Placeholder #УзТег1 ишлатма!",
+  "hashtag_uz": "3-5 ta mavzuga oid hashteg O'ZBEK LOTIN alifbosida. Misol: '#Tramp #AQSH #Iqtisodiyot #1KUN'. Placeholder #UzTag1 ishlatma!",
   "hashtag_ru": "3-5 тематических хэштегов на русском. Пример: '#Трамп #США #Экономика #1День'. НЕ используй #РуТег1!",
   "hashtag_en": "3-5 topic hashtags in English. Example: '#Trump #USA #Economy #1Day'. Do NOT use #EnTag1!",
   "keywords_en": ["PersonName", "CountryOrCity", "OrganizationName", "EventTopic", "KeyTerm"],
@@ -711,65 +716,89 @@ Return ONLY valid JSON, no extra text, no markdown:
     {{"shot": 5, "description": "Context or background scene (5-8 words)", "search": "background context footage 2026", "duration": 5}},
     {{"shot": 6, "description": "Closing wide or symbolic shot (5-8 words)", "search": "symbolic closing shot footage 2026", "duration": 5}}
   ],
-  "location_uz": "Шаҳар ёки давлат ўзбек КИРИЛЛ алифбосида",
+  "location_uz": "Shahar yoki davlat O'ZBEK LOTIN alifbosida. Misol: Moskva, Vashington, Eron, Ukraina",
   "location_ru": "Город или страна на русском",
   "location_en": "City or country in English"
 }}
 
 RULES:
-- sarlavha_uz, jumla1_uz, jumla2_uz, location_uz, hashtag_uz: MUST be in Uzbek CYRILLIC script
-- script_uz: MUST be in Uzbek LATIN script (for TTS voice synthesis)
+- sarlavha_uz, jumla1_uz, jumla2_uz, location_uz, hashtag_uz, script_uz: ALL MUST be in Uzbek LATIN script
+- DO NOT use Cyrillic in ANY Uzbek field — only Latin o'zbek alifbosi
 - sarlavha fields: sentence case — NOT ALL CAPS, NOT Title Case
 - daraja: muhim=war/disaster/crisis, tezkor=politics/economy/diplomacy, xabar=other
 - hashtag fields: REAL topic-specific hashtags ONLY. NEVER use placeholders like #УзТег1 #РуТег1 #EnTag1
-- UZBEK PLACE NAMES for sarlavha/jumla (CYRILLIC). Use EXACT forms (NOT Russian forms!):
-  Iran=Эрон (NOT Иран!), Iraq=Ироқ, Afghanistan=Афғонистон,
-  Pakistan=Покистон (NOT Пакистан!), India=Ҳиндистон,
-  China=Хитой, Israel=Исроил (NOT Израил!), Palestine=Фаластин, Syria=Сурия, Yemen=Яман,
-  Lebanon=Ливан (NOT Либия!), Egypt=Миср, Turkey=Туркия,
-  Jordan=Урдун, Libya=Либия (Afrika, NOT Lebanon!),
-  Morocco=Мароқаш, Algeria=Жазоир, Sudan=Судон, Ethiopia=Ҳабашистон,
-  Saudi Arabia=Саудия Арабистони, UAE=БАА, Gaza=Ғазо,
-  Russia=Россия, Ukraine=Украина, Belarus=Беларусь, Kazakhstan=Қозоғистон,
-  Azerbaijan=Озарбайжон (NOT Озарбойжон! NOT Азарбайжон!),
-  Armenia=Арманистон, Georgia=Грузия,
-  Kyiv=Киев, Moscow=Москва, Washington=Вашингтон, London=Лондон,
-  Paris=Париж, Berlin=Берлин, Brussels=Брюссел, Geneva=Женева,
-  Islamabad=Исломобод, Tehran=Теҳрон, Damascus=Дамашқ, Baghdad=Бағдод,
-  Kabul=Қобул, Delhi=Деҳли, Ankara=Анқара, Istanbul=Истанбул,
-  Beirut=Байрут, Riyadh=Риёд, Doha=Доҳа, Tokyo=Токио,
-  New York=Нью-Йорк, Brussels=Брюссел
-- UZBEK TERMS (MUHIM — noto'g'ri tarjimalarni TAQIQLANG!):
-  negotiations=музокаралар (NOT суҳбатлар! NOT сўхбат! NOT гуфтугў!),
-  talks=музокаралар (NOT суҳбатлар! NOT сўхбат!),
-  peace talks=тинчлик музокаралари,
-  ceasefire=оташбас (NOT "ўт очишни тўхтатиш"),
-  aid=ёрдам (NOT қарз! NOT қарз пуллар!),
-  foreign aid=хорижий ёрдам, humanitarian aid=инсонпарварлик ёрдами,
-  loan=қарз (BU "aid" EMAS!), grant=грант, donation=хайрия,
-  PM-designate=Бош вазир номзоди, designate=номзод (NOT тадбиркор!),
-  candidate=номзод, nominee=номзод, appointed=тайинланган,
-  businessman=тадбиркор (FAQAT "businessman/entrepreneur" uchun!),
-  report=ҳисобот (NOT егоҳда! NOT йегоҳда!),
-  parliamentary report=парламент ҳисоботи,
-  committee=қўмита, MPs warn=депутатлар огоҳлантирмоқда,
-  significant gaps=жиддий камчиликлар, strategy=стратегия,
-  cuts=қисқартиришлар, budget cuts=бюджет қисқартмалари,
-  West Bank=Ғарбий соҳил, airstrikes=авиазарба, sanctions=санкциялар,
-  meeting=учрашув, summit=саммит, agreement=келишув, deal=битим,
-  missile=ракета, drone=дрон, troops=қўшинлар, forces=кучлар,
-  president=президент, minister=вазир, parliament=парламент,
-  Jewish/jew=яҳудий (NOT еврей!), Jews=яҳудийлар, Israeli=исроиллик,
-  settlement=мустамлака, hostages=гаровдагилар, prisoners=маҳбуслар,
-  Zelensky=Зеленский, Putin=Путин, Trump=Трамп, Biden=Байден,
-  Netanyahu=Нетаняҳу, Macron=Макрон, Modi=Моди, Xi=Си (Си Цзиньпин),
-  Musk=Маск, OpenAI=ОпенАИ (NOT "Очиқ АИ"!), Tesla=Тесла
+- UZBEK PLACE NAMES for sarlavha/jumla/script (ALL in LATIN). Use EXACT Uzbek Latin forms:
+  Iran=Eron, Iraq=Iroq, Afghanistan=Afgʻoniston, Pakistan=Pokiston, India=Hindiston,
+  China=Xitoy, Israel=Isroil (NOT Izrail!), Palestine=Falastin, Syria=Suriya, Yemen=Yaman,
+  Lebanon=Livan (NOT Liviya!), Egypt=Misr, Turkey=Turkiya, Jordan=Iordaniya,
+  Libya=Liviya (Africa, NOT Lebanon!), Morocco=Marokash, Algeria=Jazoir,
+  Sudan=Sudan, Ethiopia=Habashiston, Saudi Arabia=Saudiya Arabistoni, UAE=BAA, Gaza=Gʻazo,
+  Russia=Rossiya, Ukraine=Ukraina, Belarus=Belarus, Kazakhstan=Qozogʻiston,
+  Azerbaijan=Ozarbayjon (NOT Ozarboyjon!), Armenia=Armaniston, Georgia=Gruziya,
+  Kyiv=Kiyev, Moscow=Moskva, Washington=Vashington, London=London,
+  Paris=Parij, Berlin=Berlin, Brussels=Bryussel, Geneva=Jeneva,
+  Islamabad=Islomobod, Tehran=Tehron, Damascus=Damashq, Baghdad=Bagʻdod,
+  Kabul=Qobul, Delhi=Dehli, Ankara=Anqara, Istanbul=Istanbul,
+  Beirut=Bayrut, Riyadh=Riyod, Doha=Doha, Tokyo=Tokio,
+  New York=Nyu-York, Vienna=Vena, Warsaw=Varshava, Rome=Rim, Madrid=Madrid
+- UZBEK TERMS (LATIN — noto'g'ri tarjimalarni TAQIQLANG!):
+  negotiations=muzokaralar (NOT suhbatlar!), talks=muzokaralar,
+  peace talks=tinchlik muzokaralari,
+  ceasefire=oʻt ochishni toʻxtatish, truce=sulh,
+  aid=yordam (NOT qarz!), foreign aid=xorijiy yordam,
+  humanitarian aid=insonparvarlik yordami,
+  loan=qarz (bu 'aid' EMAS!), grant=grant, donation=xayriya,
+  PM-designate=Bosh vazir nomzodi, designate=nomzod (NOT tadbirkor!),
+  candidate=nomzod, nominee=nomzod, appointed=tayinlangan,
+  businessman=tadbirkor (FAQAT 'businessman/entrepreneur' uchun!),
+  report=hisobot, parliamentary report=parlament hisoboti,
+  committee=qo'mita, MPs warn=deputatlar ogohlantirmoqda,
+  significant gaps=jiddiy kamchiliklar, strategy=strategiya,
+  cuts=qisqartirish, budget cuts=byudjet qisqartmasi,
+  West Bank=Gʻarbiy qirgʻoq, airstrikes=aviazarba, sanctions=sanksiyalar,
+  meeting=uchrashuv, summit=sammit, agreement=kelishuv, deal=bitim,
+  missile=raketa, drone=dron, troops=qoʻshinlar, forces=kuchlar,
+  president=prezident, minister=vazir, parliament=parlament,
+  Jewish/Jew=yahudiy, Jews=yahudiylar, Israeli=isroillik,
+  settlement=mustamlaka, hostages=garovdagilar, prisoners=mahbuslar,
+  Zelensky=Zelenskiy, Putin=Putin, Trump=Tramp, Biden=Bayden,
+  Netanyahu=Netanyaxu, Macron=Makron, Modi=Modi, Xi=Si (Si Szinpin),
+  Musk=Mask, OpenAI=OpenAI, Tesla=Tesla
 - HEADLINE RULES (MAJBURIY!):
   * sarlavha_uz MUST capture the SPECIFIC story, NOT generic statements
   * BAD example: "Британияда ўзгаришлар бўлди" (too generic, meaningless)
   * GOOD example: "Британия хорижий ёрдам стратегиясида жиддий камчиликлар"
   * Include: WHO did WHAT or WHAT happened — specific subject + action
   * Avoid empty phrases: "...ҳақида", "...бўлди", "...билан боғлиқ"
+- CAPITALIZATION (MANDATORY — ALL languages, ALL fields):
+  * Person names ALWAYS start with CAPITAL letter (even mid-sentence):
+    English: Trump, Putin, Zelensky, Biden, Macron, Modi, Musk
+    Russian: Трамп, Путин, Зеленский, Байден, Макрон, Моди, Маск
+    Uzbek Latin: Tramp, Putin, Zelenskiy, Bayden, Makron, Modi, Mask
+  * Country names ALWAYS capitalized: Ukraine/Украина/Ukraina, Russia/Россия/Rossiya,
+    USA/США/AQSH, China/Китай/Xitoy, Israel/Израиль/Isroil, Iran/Иран/Eron
+  * City names ALWAYS capitalized: Kyiv/Киев/Kiyev, Moscow/Москва/Moskva,
+    London/Лондон/London, Paris/Париж/Parij, Washington/Вашингтон/Vashington,
+    Berlin/Берлин/Berlin, Vienna/Вена/Vena, Warsaw/Варшава/Varshava,
+    Beirut/Бейрут/Bayrut, Tehran/Тегеран/Tehron, Tokyo/Токио/Tokio
+  * Organization names ALWAYS capitalized: NATO/НАТО, UN/ООН/BMT, EU/ЕС,
+    IMF/МВФ, Hamas/ХАМАС, Hezbollah/Хезболла, ISIS/ИГИЛ
+  * NEVER write proper nouns in lowercase: "trump" "москва" "ukraina" are WRONG
+- RUSSIAN RULES (MANDATORY — applies to sarlavha_ru, jumla1_ru, jumla2_ru, script_ru):
+  * ALWAYS "в Украине", "в Киеве" — NEVER "на Украине"! "на Украине" is politically incorrect.
+  * City/country names ALWAYS start with CAPITAL letter: Вена, Лондон, Берлин, Рим, Мадрид, Токио, Вашингтон, Париж, Варшава, Брюссель, Пекин, Сеул, Тегеран, Бейрут, Эр-Рияд
+  * ALL person names MUST be written in Cyrillic — NEVER leave them in Latin!
+    Зеленский (NOT Zelensky!), Путин (NOT Putin!), Трамп (NOT Trump!),
+    Байден (NOT Biden!), Нетаньяху (NOT Netanyahu!), Макрон (NOT Macron!),
+    Моди (NOT Modi!), Си Цзиньпин (NOT Xi Jinping!), Маск (NOT Musk!),
+    Шольц (NOT Scholz!), Старший (NOT Starmer!), Орбан (NOT Orban!)
+  * NEVER mix Latin letters into Russian text — transliterate ALL foreign names
+  * Proper nouns: first letter ALWAYS capital — names, countries, cities, organizations
+- UZBEK PERSON NAME RULES (sarlavha_uz, jumla_uz ? LOTIN, MANDATORY):
+  * ALL person names in sarlavha_uz/jumla_uz MUST be in Uzbek LATIN ? NEVER Cyrillic!
+    Zelenskiy, Putin, Tramp, Bayden, Netanyaxu, Makron, Modi, Si Szinpin, Mask
+  * NEVER write Cyrillic letters in sarlavha_uz or jumla_uz fields
+  * All words in sarlavha_uz/jumla_uz must be fully Latin (a-z, o?, g?)
 - UZBEK PLACE NAMES for script_uz (LATIN TTS):
   Israel=Isroil (NOT Izrail!), Lebanon=Livan (NOT Liviya!),
   Iran=Eron, Iraq=Iroq, Palestine=Falastin, Syria=Suriya, Gaza=Gʻazo,
@@ -789,9 +818,9 @@ Title: {title}
 Details: {description}
 
 {{
-  "sarlavha_uz": "5-7 so'z FAQAT O'ZBEK KIRIЛЛIDA — inglizcha yozma! Misol: 'Yamanда минали инqiroz davom etmoqda'",
-  "jumla1_uz": "FAQAT O'ZBEK KIRIЛЛIDA — 3-4 ta jumla. Nima bo'ldi, qayerda, kim, nima uchun — barchasi kiriллda",
-  "jumla2_uz": "FAQAT O'ZBEK KIRIЛЛIDA — 2-3 ta jumla. Natijalar, kontekst, tafsilotlar",
+  "sarlavha_uz": "5-7 so'z O'ZBEK LOTIN alifbosida — inglizcha yozma! Misol: 'Yamanda minali inqiroz davom etmoqda'",
+  "jumla1_uz": "O'ZBEK LOTIN alifbosida — 3-4 ta jumla. Nima bo'ldi, qayerda, kim, nima uchun",
+  "jumla2_uz": "O'ZBEK LOTIN alifbosida — 2-3 ta jumla. Natijalar, kontekst, tafsilotlar",
   "sarlavha_ru": "5-7 слов ТОЛЬКО НА РУССКОМ — не по-английски! Пример: 'Минный кризис в Йемене продолжается'",
   "jumla1_ru": "ТОЛЬКО РУССКИЙ — 3-4 предложения. Что произошло, где, кто, почему",
   "jumla2_ru": "ТОЛЬКО РУССКИЙ — 2-3 предложения. Последствия, контекст",
@@ -799,15 +828,15 @@ Details: {description}
   "jumla1_en": "3-4 sentences in English. What happened, where, who, why",
   "jumla2_en": "2-3 sentences. Consequences and context",
   "daraja": "muhim OR tezkor OR xabar",
-  "hashtag_uz": "#3-4 та хэштег O'ЗБЕК КИРИЛЛИДА. Мисол: '#Яман #Дунё #1КУН'",
+  "hashtag_uz": "#3-4 ta hashteg O'ZBEK LOTIN alifbosida. Misol: '#Yaman #Dunyo #1KUN'",
   "hashtag_ru": "#3-4 хэштега по-РУССКИ. Пример: '#Йемен #Мир #1День'",
   "hashtag_en": "#3-4 hashtags. Example: '#Yemen #World #1Day'",
-  "location_uz": "Joy nomi kiriллda (shahar yoki davlat)",
+  "location_uz": "Joy nomi LOTIN alifbosida (shahar yoki davlat)",
   "location_ru": "Место по-русски",
   "location_en": "Location in English",
   "keywords_en": ["Person", "Country", "Organization", "Topic", "Term"]
 }}
-CRITICAL: sarlavha_uz, jumla1_uz, jumla2_uz — FAQAT O'ZBEK KIRILLI (а,б,в,г,д...). Inglizcha YOZMA!
+CRITICAL: sarlavha_uz, jumla1_uz, jumla2_uz — O'ZBEK LOTIN alifbosida. Kirill YOZMA! Inglizcha YOZMA!
 CRITICAL: sarlavha_ru, jumla1_ru, jumla2_ru — FAQAT RUSCHA (а,б,в,г,д...). Inglizcha YOZMA!"""
 
     # ── 1. Anthropic Claude Sonnet 4.6 — to'liq prompt (asosiy, eng yuqori sifat) ──
@@ -872,7 +901,7 @@ CRITICAL: sarlavha_ru, jumla1_ru, jumla2_ru — FAQAT RUSCHA (а,б,в,г,д...)
                 "script_ru":    "",
                 "script_en":    _en_script,
                 "daraja":       "xabar",
-                "hashtag_uz":   "#Янгилик #Дунё #1КУН",
+                "hashtag_uz":   "#Yangilik #Dunyo #1KUN",
                 "hashtag_ru":   "#Новости #Мир #1День",
                 "hashtag_en":   "#News #World #1Day",
                 "keywords_en":  title.split()[:5],
@@ -896,10 +925,174 @@ CRITICAL: sarlavha_ru, jumla1_ru, jumla2_ru — FAQAT RUSCHA (а,б,в,г,д...)
     for field in ("sarlavha_uz", "sarlavha_ru", "sarlavha_en"):
         data[field] = _fix_case(data.get(field, ""))
 
-    # ── UZ kirill maydonlar (sarlavha/jumla) — kiriллcha bo'lishi kerak ──
-    _CYR_FIELDS = ("sarlavha_uz", "jumla1_uz", "jumla2_uz", "location_uz")
+    # ── Proper noun capitalization — isim, joy, mamlakat katta harf ──
+    # Known proper nouns: har doim bosh harf (lotin va kirill)
+    _PROPER_NOUNS_LAT = [
+        # ── Shaxslar (Uzbek Latin / English) ─────────────────────────
+        "Trump","Tramp","Biden","Bayden","Putin","Zelensky","Zelenskiy",
+        "Netanyahu","Netanyaxu","Macron","Makron","Modi","Scholz","Shols",
+        "Starmer","Orban","Erdogan","Musk","Mask","Johnson","Sunak","Meloni",
+        "Guterres","Blinken","Lavrov","Lukashenko","Aliyev","Pashinyan",
+        "Tokayev","Sinwar","Abbas","Khamenei","Xi","Jinping","Szinpin",
+        "Kim","Kishida","Zelenski","Milei","Lula","Modi","Albanese",
+        # ── Davlatlar ──────────────────────────────────────────────────
+        "Ukraine","Ukraina","Russia","Rossiya","USA","AQSH","China","Xitoy",
+        "Israel","Isroil","Iran","Eron","Iraq","Iroq","Turkey","Turkiya",
+        "Germany","Germaniya","France","Fransiya","Britain","Britaniya",
+        "England","Angliya","Italy","Italiya","Spain","Ispaniya",
+        "Poland","Polsha","Hungary","Vengriya","Sweden","Shvetsiya",
+        "Finland","Finlandiya","Norway","Norvegiya","Denmark","Daniya",
+        "Pakistan","Pokiston","India","Hindiston","Afghanistan","Afgʻoniston",
+        "Palestine","Falastin","Syria","Suriya","Yemen","Yaman",
+        "Egypt","Misr","Lebanon","Livan","Libya","Liviya",
+        "Saudi","Saudiya","Qatar","Quvayt","Kuwait","Bahrain","Bahrayn",
+        "Kazakhstan","Qozogʻiston","Azerbaijan","Ozarbayjon",
+        "Georgia","Gruziya","Belarus","Armenia","Armaniston",
+        "Japan","Yaponiya","Korea","Koreya","Australia","Avstraliya",
+        "Canada","Kanada","Brazil","Braziliya","Argentina","Argentina",
+        "Mexico","Meksika","Nigeria","Nigeriya","Ethiopia","Habashiston",
+        "Somalia","Somali","Sudan","Liviya","Morocco","Marokash",
+        # ── Shaharlar ──────────────────────────────────────────────────
+        "Kyiv","Kiyev","Moscow","Moskva","London","Paris","Parij",
+        "Washington","Vashington","Berlin","Vienna","Vena",
+        "Warsaw","Varshava","Beirut","Bayrut","Tehran","Tehron",
+        "Tokyo","Tokio","Doha","Riyadh","Riyod","Ankara","Anqara",
+        "Istanbul","Baghdad","Bagʻdod","Kabul","Qobul",
+        "Delhi","Dehli","Islamabad","Islomobod","Damascus","Damashq",
+        "Amman","Ammol","Cairo","Qohira","Rabat","Algiers","Jazoir",
+        "Nairobi","Lagos","Addis","Abeba","Mogadishu","Mogadisho",
+        "Zaporizhzhia","Zaporizh","Mariupol","Mariupol",
+        "Kharkiv","Xarkiv","Odesa","Odessa","Kherson","Xerson",
+        "Donetsk","Donetsk","Luhansk","Lugansk","Donbas","Donbass",
+        "Geneva","Jeneva","Brussels","Bryussel","Rome","Rim","Rim",
+        "Madrid","Madrid","Lisbon","Lissabon","Athens","Afina",
+        "Helsinki","Xelsinki","Oslo","Oslo","Stockholm","Stokgolm",
+        "New York","Nyu-York","Los Angeles","Chicago","Houston",
+        "Beijing","Pekin","Shanghai","Shanxay","Hong Kong","Gonkong",
+        "Singapore","Singapur","Bangkok","Bangkok","Jakarta","Jakarta",
+        "Riyadh","Riyod","Abu Dhabi","Abu-Dabi","Dubai","Dubay",
+        # ── Tashkilotlar ───────────────────────────────────────────────
+        "NATO","UN","BMT","EU","IMF","CIA","FBI","WHO","WTO","ICC",
+        "Hamas","Hezbollah","ISIS","ISIL","Houthis","Houthi","Husillar",
+        "Kremlin","Pentagon","Interpol","Europol","OPEC",
+    ]
+    _PROPER_NOUNS_CYR = [
+        # ── Shaxslar (Russian Cyrillic) ───────────────────────────────
+        "Трамп","Байден","Путин","Зеленский","Нетаньяху","Макрон","Моди",
+        "Шольц","Стармер","Орбан","Эрдоган","Маск","Джонсон","Сунак",
+        "Мелони","Гутерреш","Блинкен","Лавров","Лукашенко","Алиев",
+        "Пашинян","Токаев","Синвар","Аббас","Хаменеи","Си","Цзиньпин",
+        "Милей","Лула","Альбанезе","Ким","Мирзиёев","Назарбаев",
+        # ── Davlatlar + tuslangan shakllari ──────────────────────────
+        # Ukraina: Украина, Украине, Украины, Украину, Украиной
+        "Украина","Украине","Украины","Украину","Украиной","Украинe",
+        # Rossiya: Россия, России, России, Россию, Россией
+        "Россия","России","Россию","Россией",
+        # Boshqa davlatlar
+        "Израиль","Израиля","Израилю","Израилем","Израиле",
+        "Иран","Ирана","Ирану","Ираном","Иране",
+        "Ирак","Ирака","Ираку","Ираком","Ираке",
+        "Германия","Германии","Германию","Германией",
+        "Франция","Франции","Францию","Францией",
+        "Британия","Британии","Британию","Британией",
+        "Китай","Китая","Китаю","Китаем","Китае",
+        "США","Турция","Турции","Турцию","Турцией",
+        "Египет","Египта","Египту","Египтом","Египте",
+        "Ливан","Ливана","Ливану","Ливаном","Ливане",
+        "Ливия","Ливии","Ливию","Ливией",
+        "Саудовская","Катар","Кувейт","Пакистан","Пакистана",
+        "Индия","Индии","Индию","Индией",
+        "Казахстан","Казахстана","Казахстане",
+        "Азербайджан","Азербайджана","Азербайджане",
+        "Беларусь","Белоруссия","Армения","Армении","Грузия","Грузии",
+        "Польша","Польши","Венгрия","Венгрии","Швеция","Финляндия",
+        "Япония","Японии","Корея","Кореи","Австралия","Австралии",
+        "Бразилия","Аргентина","Мексика","Нигерия","Эфиопия",
+        # ── Shaharlar + tuslangan shakllari ──────────────────────────
+        # Kiyev
+        "Киев","Киева","Киеву","Киевом","Киеве",
+        # Moskva
+        "Москва","Москве","Москвы","Москву","Москвой",
+        # Boshqa shaharlar
+        "Лондон","Лондона","Лондону","Лондоном","Лондоне",
+        "Париж","Парижа","Парижу","Парижем","Париже",
+        "Вашингтон","Вашингтона","Вашингтоне",
+        "Берлин","Берлина","Берлине",
+        "Вена","Вены","Вене","Вену","Веной",
+        "Варшава","Варшавы","Варшаве","Варшаву","Варшавой",
+        "Бейрут","Бейрута","Бейруте",
+        "Тегеран","Тегерана","Тегеране",
+        "Токио","Доха","Эр-Рияд","Эр-Рияде",
+        "Анкара","Анкары","Анкаре",
+        "Стамбул","Стамбула","Стамбуле",
+        "Багдад","Багдада","Багдаде",
+        "Кабул","Дели","Исламабад","Дамаск","Аммон","Каир","Рабат",
+        "Запорожье","Мариуполь","Харьков","Одесса","Херсон",
+        "Донецк","Луганск","Донбасс",
+        "Женева","Женевы","Женеве",
+        "Брюссель","Брюсселя","Брюсселе",
+        "Рим","Рима","Риме",
+        "Мадрид","Лиссабон","Афины","Хельсинки","Осло","Стокгольм",
+        "Нью-Йорк","Пекин","Шанхай","Сингапур","Бангкок","Дубай",
+        "Абу-Даби","Эр-Рияд",
+        # ── Tashkilotlar ─────────────────────────────────────────────
+        "НАТО","ООН","ЕС","МВФ","ВОЗ","ВТО","МУС","ИГИЛ","ХАМАС",
+        "Хезболла","Хуситы","Кремль","Пентагон","Интерпол","ОПЕК",
+    ]
 
-    # O'zbek lotiniga xos belgilar — inglizchadan farqlash uchun
+    def _capitalize_proper(text: str, nouns: list) -> str:
+        # Matnda proper noun larni katta harf bilan yozish.
+        # Uzbek suffikslari (-da, -ga, -ni, -ning, -dan, -lar) bilan ham ishlaydi:
+        #   "ukrainada" → "Ukrainada", "moskvaga" → "Moskvaga"
+        # Kirill uchun: tuslangan shakllar ro'yxatda berilgan
+        if not text:
+            return text
+        # Uzbek apostroplarini normallashtirish (g' va gʻ, o' va oʻ tenglashtirish)
+        text_norm = text.replace("ʻ", "'").replace("ʼ", "'")
+        modified  = False
+        result    = text_norm
+        for noun in nouns:
+            if len(noun) < 2:
+                continue
+            noun_norm = noun.replace("ʻ", "'").replace("ʼ", "'")
+            # Faqat lookBEHIND — so'z boshi (oxiri TEKSHIRILMAYDI — suffiks uchun)
+            pattern = r'(?<![a-zA-ZЀ-ӿʻʼ\'])' + re.escape(noun_norm)
+            replacement = noun_norm[0].upper() + noun_norm[1:]
+            try:
+                new_result = re.sub(pattern, replacement, result, flags=re.IGNORECASE)
+                if new_result != result:
+                    modified = True
+                    result = new_result
+            except Exception:
+                pass
+        if not modified:
+            return text   # Hech narsa o'zgarmadi — original qaytariladi
+        # Apostrof normalizatsiyasini teskari qaytarish (original format saqlash)
+        # (lotin matnda g' qoladi, Kirill matnda o'zgartirish kerak emas)
+        return result
+
+
+    # Apply to Latin UZ fields (sarlavha, jumla, script, location)
+    for _f in ("sarlavha_uz", "jumla1_uz", "jumla2_uz", "script_uz", "location_uz"):
+        _v = data.get(_f, "")
+        if _v:
+            data[_f] = _capitalize_proper(_v, _PROPER_NOUNS_LAT)
+
+    # Apply to Cyrillic RU fields
+    for _f in ("sarlavha_ru", "jumla1_ru", "jumla2_ru", "script_ru", "location_ru"):
+        _v = data.get(_f, "")
+        if _v:
+            data[_f] = _capitalize_proper(_v, _PROPER_NOUNS_CYR)
+
+    # Apply to EN fields
+    for _f in ("sarlavha_en", "jumla1_en", "jumla2_en", "script_en", "location_en"):
+        _v = data.get(_f, "")
+        if _v:
+            data[_f] = _capitalize_proper(_v, _PROPER_NOUNS_LAT)
+
+
+    # ── UZ maydonlar — LOTIN alifbosida bo'lishi kerak ──────
+    # (Kirill validatsiyasi yo'q — lotin qabul qilinadi)
     _UZ_LATIN_MARKERS = ("o'", "g'", "o'", "g'", "sh", "ch", "ng",
                          "o'z", "va ", "bu ", "lar", "dan", "ga ",
                          "ni ", "da ", "ham", "bir", "bor")
@@ -917,66 +1110,48 @@ CRITICAL: sarlavha_ru, jumla1_ru, jumla2_ru — FAQAT RUSCHA (а,б,в,г,д...)
         tl = text.lower()
         return any(m in tl for m in _UZ_LATIN_MARKERS)
 
-    for field in _CYR_FIELDS:
+    # UZ maydonlar: agar Kirill kelsa — retry so'rab lotin olish
+    for field in ("sarlavha_uz", "jumla1_uz", "jumla2_uz"):
         val = data.get(field, "")
         if not val:
             continue
         if _is_mostly_cyr(val):
-            continue  # Allaqachon kirill — yaxshi
-
-        if _is_uzbek_latin(val):
-            # O'zbek lotin → kirill (to'g'ri yo'l)
-            data[field] = lat2cyr(val)
-            log.debug(f"lat2cyr ({field}): o'zbek lotin→kirill")
-        else:
-            # Inglizcha yoki noto'g'ri til — lat2cyr QILMAYMIZ
-            log.warning(f"⚠️  {field} inglizcha: '{val[:50]}' — RU->UZ yo'li sinab ko'rilmoqda...")
-            # Birinchi: RU manbasidan UZ tarjima (sifat yaxshiroq)
-            _ru_src = ""
+            # Kirill keldi — lotin so'rab retry
+            log.warning(f"⚠️  {field} Kirill keldi — lotin retry...")
             if "sarlavha" in field:
-                _ru_src = data.get("sarlavha_ru", "")
-            elif "jumla1" in field:
-                _ru_src = data.get("jumla1_ru", "")
-            elif "jumla2" in field:
-                _ru_src = data.get("jumla2_ru", "")
-
-            fixed = ""
-            if _ru_src and _ru_src.strip():
-                fixed = _uz_from_russian(_ru_src[:400], context_en=title)
-
-            # RU->UZ muvaffaqiyatsiz — EN sarlavhadan retry
-            if not fixed or not _is_mostly_cyr(fixed):
-                fixed = _fix_title_only(title, "uz", source_ru=data.get("sarlavha_ru", ""))
-
-            if fixed and _is_mostly_cyr(fixed):
-                if "sarlavha" in field or "jumla" in field:
+                fixed = _fix_title_only(title, "uz")
+                if fixed and not _is_mostly_cyr(fixed):
                     data[field] = fixed
-                else:
-                    data[field] = ""    # location — bo'sh qoldir
-                log.debug(f"  ✓ {field} tuzatildi: '{data[field][:50]}'")
-            else:
-                data[field] = ""  # Bo'sh — lat2cyr gibberish'dan yaxshi
-                log.warning(f"  ✗ {field} bo'sh qoldirildi (tarjima qilinmadi)")
+                    log.info(f"  ✓ {field} lotin retry: '{fixed[:50]}'")
+                # aks holda — kirill qolsin (bo'shdan yaxshi)
 
-    # ── UZ kirill maydonlarga joy nomlari (rus→o'zbek) ───────
-    for field in _CYR_FIELDS:
+
+    # ── UZ LOTIN maydonlarga joy nomlari tuzatish ────────────
+    # (Kirill _apply_uz_places o'rniga — lotin shakllari)
+    _LATIN_UZ_PLACES = {
+        "Israel":   "Isroil",   "Izrail":   "Isroil",
+        "Lebanon":  "Livan",    "Livon":    "Livan",
+        "Liban":    "Livan",
+        "Iran":     "Eron",     "Iraq":     "Iroq",
+        "Palestine":"Falastin", "Syria":    "Suriya",
+        "Yemen":    "Yaman",    "Egypt":    "Misr",
+        "Turkey":   "Turkiya",  "India":    "Hindiston",
+        "China":    "Xitoy",    "Germany":  "Germaniya",
+        "France":   "Fransiya", "Italy":    "Italiya",
+        "Pakistan": "Pokiston", "Afghanistan": "Afgʻoniston",
+        "Libya":    "Liviya",   "Gaza":     "Gʻazo",
+        "Saudi Arabia": "Saudiya Arabistoni",
+    }
+    for field in ("sarlavha_uz", "jumla1_uz", "jumla2_uz", "location_uz"):
         val = data.get(field, "")
-        if val:
-            fixed = _apply_uz_places(val)
-            if fixed != val:
-                log.debug(f"joy nomi tuzatildi ({field}): '{val[:40]}' → '{fixed[:40]}'")
-                data[field] = fixed
+        if not val or _is_mostly_cyr(val):
+            continue  # Kirill — tegmaymiz
+        for wrong, right in sorted(_LATIN_UZ_PLACES.items(), key=lambda x: -len(x[0])):
+            if wrong in val:
+                val = re.sub(r'(?<![a-zA-Z])' + re.escape(wrong) + r'(?![a-zA-Z])', right, val)
+        data[field] = val
 
-    # ── UZ kirill maydonlarga atama tuzatish (оташбас→оташкесим va b.) ──
-    for field in _CYR_FIELDS + ("jumla1_uz", "jumla2_uz"):
-        val = data.get(field, "")
-        if val:
-            fixed = _apply_uz_terms(val)
-            if fixed != val:
-                log.debug(f"atama tuzatildi ({field}): '{val[:40]}' → '{fixed[:40]}'")
-                data[field] = fixed
-
-    # ── script_uz — Lotin, TTS uchun; lotin joy nomlari tuzatish ─
+    # ── UZ LOTIN maydonlar (sarlavha/jumla + script) — joy nomlari tuzatish ─
     _LATIN_PLACES_ALWAYS = {
         # Har doim to'g'rilanadigan xatolar
         "Izrail":     "Isroil",
@@ -987,14 +1162,15 @@ CRITICAL: sarlavha_ru, jumla1_ru, jumla2_ru — FAQAT RUSCHA (а,б,в,г,д...)
         "Afgoniston": "Afgʻoniston",
         "Pokiston":   "Pokiston",
     }
-    script = data.get("script_uz", "")
-    if script:
-        import re as _re
-        for wrong, right in _LATIN_PLACES_ALWAYS.items():
-            if wrong in script and wrong != right:
-                script = _re.sub(r'(?<![a-zA-Z])' + _re.escape(wrong) + r'(?![a-zA-Z])',
-                                 right, script)
-        data["script_uz"] = script
+    for _uz_f in ("sarlavha_uz", "jumla1_uz", "jumla2_uz", "script_uz"):
+        _uz_v = data.get(_uz_f, "")
+        if _uz_v and not _is_mostly_cyr(_uz_v):
+            import re as _re
+            for wrong, right in _LATIN_PLACES_ALWAYS.items():
+                if wrong in _uz_v and wrong != right:
+                    _uz_v = _re.sub(r'(?<![a-zA-Z])' + _re.escape(wrong) + r'(?![a-zA-Z])',
+                                    right, _uz_v)
+            data[_uz_f] = _uz_v
 
     # (Eski kontekst-ga asoslangan tuzatish olib tashlandi —
     #  endi _is_lebanon/_is_libya manba-asosli tuzatish OXIRDA bajariladi)
@@ -1009,10 +1185,8 @@ CRITICAL: sarlavha_ru, jumla1_ru, jumla2_ru — FAQAT RUSCHA (а,б,в,г,д...)
             data[ht_field] = generated
             log.warning(f"⚠️  {ht_field} placeholder — yangilandi: {generated}")
 
-    # ── hashtag_uz kiriллcha bo'lishi kerak ──────────────────
-    htag = data.get("hashtag_uz", "")
-    if htag and not any(c in htag for c in _CYR):
-        data["hashtag_uz"] = lat2cyr(htag)
+    # ── hashtag_uz LOTIN bo'lishi kerak (Kirill→Lotin agar Kirill kelsa) ──
+    # Lotin qoladi — lat2cyr QILMAYMIZ
 
     # ══════════════════════════════════════════════════════════
     # Sarlavha validatsiyasi — xato bo'lsa alohida retry
@@ -1044,40 +1218,287 @@ CRITICAL: sarlavha_ru, jumla1_ru, jumla2_ru — FAQAT RUSCHA (а,б,в,г,д...)
     # Barcha matn maydonlari — bosh harf + lotin-kirill tuzatish
     # (Groq modeli ba'zan kichik harfdan boshlaydi va lotin aralashtiradi)
     # ══════════════════════════════════════════════════════════
-    _LATIN_IN_CYR = re.compile(r'\b[a-zA-Z][a-zA-Z\'\u02BB\u02BC]{2,}\b')
+    _LATIN_IN_CYR = re.compile(r'\b[a-zA-Z][a-zA-Z\'ʻʼ]{2,}\b')
+    # "prezidentи" — Latin chars followed immediately by Cyrillic (no word boundary!)
+    _CYR_CHARS = "абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯўқғҳЎҚҒҲ"
+    _LATIN_BEFORE_CYR = re.compile(r'[a-zA-Z]{3,}(?=[' + _CYR_CHARS + r'])')
 
-    def _fix_latin_in_cyr_text(text: str) -> str:
-        """Kirill matnidagi lotin so'zlarni (3+ harf) kirill ga o'tkazish."""
-        if not text or not _LATIN_IN_CYR.search(text):
+    # ── RU: "на Украине" → "в Украине" ──────────────────────────
+    _UA_FIX = [
+        ("на Украине", "в Украине"),
+        ("На Украине", "В Украине"),
+        ("на Украину", "в Украину"),
+        ("с Украины",  "из Украины"),
+    ]
+
+    # ── RU: lotin ismlar → ruscha kirill ─────────────────────────
+    _RU_NAME_FIX = {
+        # ── Siyosatchilar / Davlat rahbarlari ──────────────────────────
+        "Von der Leyen": "Фон дер Ляйен",
+        "Zelensky":    "Зеленский",  "Zelenskyy":  "Зеленский",
+        "Zelenskiy":   "Зеленский",  "zelensky":   "Зеленский",
+        "Netanyahu":   "Нетаньяху",  "netanyahu":  "Нетаньяху",
+        "Lukashenko":  "Лукашенко",  "lukashenko": "Лукашенко",
+        "Guterres":    "Гутерреш",   "guterres":   "Гутерреш",
+        "Pashinyan":   "Пашинян",    "Tokayev":    "Токаев",
+        "Khamenei":    "Хаменеи",    "Blinken":    "Блинкен",
+        "Putin":       "Путин",      "Trump":      "Трамп",
+        "Biden":       "Байден",     "Macron":     "Макрон",
+        "Scholz":      "Шольц",      "Starmer":    "Стармер",
+        "Orban":       "Орбан",      "Erdogan":    "Эрдоган",
+        "Modi":        "Моди",       "Musk":       "Маск",
+        "Johnson":     "Джонсон",    "Sunak":      "Сунак",
+        "Meloni":      "Мелони",     "Sinwar":     "Синвар",
+        "Abbas":       "Аббас",      "Aliyev":     "Алиев",
+        "Mirziyoyev":  "Мирзиёев",  "Mirziyev":   "Мирзиёев",
+        "Nazarbayev":  "Назарбаев",  "Lukashenka": "Лукашенко",
+        "Pezeshkian":  "Пезешкиан", "Raisi":      "Раиси",
+        "Khamenei":    "Хаменеи",   "Nasrallah":  "Насралла",
+        "Sinwar":      "Синвар",     "Haniyeh":    "Хания",
+        # ── AQSh ma'murlari ────────────────────────────────────────────
+        "Hegseth":     "Хегсет",     "hegseth":    "Хегсет",
+        "Rubio":       "Рубио",      "rubio":      "Рубио",
+        "Sullivan":    "Салливан",   "sullivan":   "Салливан",
+        "Austin":      "Остин",      "austin":     "Остин",
+        "Blinken":     "Блинкен",    "blinken":    "Блинкен",
+        "Pompeo":      "Помпео",     "pompeo":     "Помпео",
+        "Bolton":      "Болтон",     "bolton":     "Болтон",
+        "Milley":      "Милли",      "milley":     "Милли",
+        "Harris":      "Харрис",     "harris":     "Харрис",
+        "Pence":       "Пенс",       "pence":      "Пенс",
+        "Pelosi":      "Пелоси",     "pelosi":     "Пелоси",
+        "Kennedy":     "Кеннеди",    "kennedy":    "Кеннеди",
+        "Vance":       "Вэнс",       "vance":      "Вэнс",
+        "Gates":       "Гейтс",      "gates":      "Гейтс",
+        "Waltz":       "Уолтц",      "waltz":      "Уолтц",
+        # ── Xalqaro rahbarlar ──────────────────────────────────────────
+        "Lavrov":      "Лавров",     "lavrov":     "Лавров",
+        "Shoigu":      "Шойгу",      "shoigu":     "Шойгу",
+        "Peskov":      "Песков",     "peskov":     "Песков",
+        "Medvedev":    "Медведев",   "medvedev":   "Медведев",
+        "Mishustin":   "Мишустин",   "mishustin":  "Мишустин",
+        "Patrushev":   "Патрушев",   "patrushev":  "Патрушев",
+        "Gerasimov":   "Герасимов",  "gerasimov":  "Герасимов",
+        "Syrsky":      "Сырский",    "syrsky":     "Сырский",
+        "Zaluzhny":    "Залужный",   "zaluzhny":   "Залужный",
+        "Arestovich":  "Арестович",  "arestovich": "Арестович",
+        "Kim":         "Ким",
+        "Xi":          "Си",         "Jinping":    "Цзиньпин",
+        "Lula":        "Лула",       "lula":       "Лула",
+        "Milei":       "Милей",      "milei":      "Милей",
+        "Albanese":    "Альбанезе",  "albanese":   "Альбанезе",
+        # ── Tashkilotlar / Harakatlar ──────────────────────────────────
+        "Hezbollah":   "Хезболла",   "Houthis":    "хуситы",
+        "Houthi":      "хуситы",     "Hamas":      "ХАМАС",
+        "ISIS":        "ИГИЛ",       "ISIL":       "ИГИЛ",
+        "Taliban":     "Талибан",    "Al-Qaeda":   "Аль-Каида",
+        "Wagner":      "Вагнер",     "Azov":       "Азов",
+        # ── Shaharlari / Joylari ───────────────────────────────────────
+        "Zaporizhzhia":"Запорожье",  "Mariupol":   "Мариуполь",
+        "Kharkiv":     "Харьков",    "Donbas":     "Донбасс",
+        "Donetsk":     "Донецк",     "Luhansk":    "Луганск",
+        "Kyiv":        "Киев",       "kyiv":       "Киев",
+        "Odesa":       "Одесса",     "Kherson":    "Херсон",
+        "Bakhmut":     "Бахмут",     "Avdiivka":   "Авдеевка",
+        "Kherson":     "Херсон",     "Mykolaiv":   "Николаев",
+        "Bucha":       "Буча",       "Irpin":      "Ирпень",
+        "Crimea":      "Крым",       "crimea":     "Крым",
+        "Sevastopol":  "Севастополь","Simferopol": "Симферополь",
+        "Gaza":        "Газа",       "Rafah":      "Рафах",
+        "Ramallah":    "Рамалла",    "Jenin":      "Дженин",
+        "Fallujah":    "Эль-Фаллуджа",
+        "Aleppo":      "Алеппо",     "aleppo":     "Алеппо",
+        "Raqqa":       "Ракка",      "Mosul":      "Мосул",
+        "Tripoli":     "Триполи",    "tripoli":    "Триполи",
+        "Benghazi":    "Бенгази",    "benghazi":   "Бенгази",
+        "Bamako":      "Бамако",     "bamako":     "Бамако",
+        "Sahel":       "Сахель",     "sahel":      "Сахель",
+        "Mali":        "Мали",       "mali":       "Мали",
+        "Niger":       "Нигер",      "Burkina":    "Буркина",
+        "Sudan":       "Судан",      "sudan":      "Судан",
+        "Khartoum":    "Хартум",     "khartoum":   "Хартум",
+        "Belgrade":    "Белград",    "belgrade":   "Белград",
+        "Serbia":      "Сербия",     "serbia":     "Сербия",
+        "Kosovo":      "Косово",     "kosovo":     "Косово",
+        "Tbilisi":     "Тбилиси",   "tbilisi":    "Тбилиси",
+        "Yerevan":     "Ереван",     "yerevan":    "Ереван",
+        "Baku":        "Баку",       "baku":       "Баку",
+        "Karabakh":    "Карабах",    "karabakh":   "Карабах",
+        "Nagorno":     "Нагорный",   "nagorno":    "Нагорный",
+    }
+
+    def _fix_latin_in_cyr_text(text: str, lang: str = "uz") -> str:
+        """Kirill matnidagi lotin so'zlarni (3+ harf) kirill ga o'tkazish.
+        Shuningdek 'prezidentи' kabi Latin+Kirill aralash so'zlarni ham tuzatadi."""
+        if not text:
+            return text
+        # 1-usul: "prezidentи" — Latin qismi Kirill bilan tutashgan
+        def _fix_mixed(m):
+            w = m.group(0)
+            return w if w.isupper() else lat2cyr(w.lower())
+        text = _LATIN_BEFORE_CYR.sub(_fix_mixed, text)
+        # 2-usul: to'liq lotin so'z (word boundary bor)
+        if not _LATIN_IN_CYR.search(text):
             return text
         def _convert(m):
             w = m.group(0)
             if w.isupper():   # NATO, UN, USA kabi — saqlash
                 return w
+            if lang == "ru":
+                return w   # RU uchun lotin ismlar alohida lug'at bilan tuzatiladi
             return lat2cyr(w.lower())
         return _LATIN_IN_CYR.sub(_convert, text)
 
-    # UZ Kirill maydoni: lotin so'zlar + bosh harf
+    def _fix_ru_latin_names(text: str) -> str:
+        """Ruscha matnda qolgan lotin ismlarni kirillga almashtirish."""
+        if not text:
+            return text
+        for lat, cyr in sorted(_RU_NAME_FIX.items(), key=lambda x: -len(x[0])):
+            if lat in text:
+                text = re.sub(r'(?<![a-zA-Z])' + re.escape(lat) + r'(?![a-zA-Z])', cyr, text)
+        return text
+
+    # ── Rus tiliga xos lotin→kirill transliteratsiya (noma'lum ismlar uchun) ──
+    _RU_TRANSLIT = [
+        # 2-harf kombinatsiyalar avval
+        ("zh", "ж"), ("Zh", "Ж"), ("ZH", "Ж"),
+        ("sh", "ш"), ("Sh", "Ш"), ("SH", "Ш"),
+        ("ch", "ч"), ("Ch", "Ч"), ("CH", "Ч"),
+        ("ts", "ц"), ("Ts", "Ц"), ("TS", "Ц"),
+        ("sch","щ"), ("Sch","Щ"),
+        ("kh", "х"), ("Kh", "Х"), ("KH", "Х"),
+        ("yu", "ю"), ("Yu", "Ю"), ("YU", "Ю"),
+        ("ya", "я"), ("Ya", "Я"), ("YA", "Я"),
+        ("yo", "ё"), ("Yo", "Ё"),
+        ("ye", "е"), ("Ye", "Е"),
+        # Yakka harflar
+        ("A","А"), ("B","Б"), ("V","В"), ("G","Г"), ("D","Д"),
+        ("E","Е"), ("Z","З"), ("I","И"), ("J","Й"), ("K","К"),
+        ("L","Л"), ("M","М"), ("N","Н"), ("O","О"), ("P","П"),
+        ("R","Р"), ("S","С"), ("T","Т"), ("U","У"), ("F","Ф"),
+        ("X","Х"), ("Y","Й"), ("W","В"), ("H","Х"), ("Q","К"),
+        ("a","а"), ("b","б"), ("v","в"), ("g","г"), ("d","д"),
+        ("e","е"), ("z","з"), ("i","и"), ("j","й"), ("k","к"),
+        ("l","л"), ("m","м"), ("n","н"), ("o","о"), ("p","п"),
+        ("r","р"), ("s","с"), ("t","т"), ("u","у"), ("f","ф"),
+        ("x","х"), ("y","й"), ("w","в"), ("h","х"), ("q","к"),
+        ("'","ъ"),
+    ]
+
+    def _ru_translit_word(word: str) -> str:
+        """Bitta lotin so'zni rus kirilliga transliterlash."""
+        if not word:
+            return word
+        # Saqlanadigan so'zlar: NATO, UN, USA, EU, IMF kabi to'liq bosh harflar
+        if word.isupper() and len(word) <= 5:
+            return word
+        result = word
+        for lat, cyr_ch in _RU_TRANSLIT:
+            result = result.replace(lat, cyr_ch)
+        return result
+
+    def _fix_ru_remaining_latin(text: str) -> str:
+        """Lug'at bilan hal qilinmagan lotin so'zlarni rus translit bilan kirillga."""
+        if not text:
+            return text
+        # Faqat 3+ harf lotin so'zlar (qisqartmalar EMAS)
+        def _convert(m):
+            w = m.group(0)
+            # Bosh harfli qisqartmalar (NATO, UN) — saqlaymiz
+            if w.isupper() and len(w) <= 5:
+                return w
+            return _ru_translit_word(w)
+        return _LATIN_IN_CYR.sub(_convert, text)
+
+    # UZ LOTIN maydoni: bosh harf (lat2cyr QILMAYMIZ!)
     for _f in ("sarlavha_uz", "jumla1_uz", "jumla2_uz"):
         val = data.get(_f, "")
         if not val:
             continue
-        val = _fix_latin_in_cyr_text(val)
-        if val and val[0].islower():
+        # Agar Kirill bo'lsa — tegmaymiz (sarlavha retry qiladi)
+        if not _is_mostly_cyr(val) and val and val[0].islower():
             val = val[0].upper() + val[1:]
         data[_f] = val
 
-    # RU Kirill maydoni: bosh harf
-    for _f in ("sarlavha_ru", "jumla1_ru", "jumla2_ru"):
+    # RU Kirill maydoni: bosh harf + "в Украине" + lotin ismlar tuzatish
+    for _f in ("sarlavha_ru", "jumla1_ru", "jumla2_ru", "script_ru"):
         val = data.get(_f, "")
+        if not val:
+            continue
+        # "на Украине" → "в Украине"
+        for wrong, right in _UA_FIX:
+            val = val.replace(wrong, right)
+        # 1) Lug'at bilan ma'lum lotin ismlarni kirillga
+        val = _fix_ru_latin_names(val)
+        # 2) "prezidentи" kabi aralash so'zlar (Latin qism + Kirill davom)
+        val = _LATIN_BEFORE_CYR.sub(
+            lambda m: m.group(0) if m.group(0).isupper() else lat2cyr(m.group(0).lower()),
+            val
+        )
+        # 3) Qolgan noma'lum lotin so'zlarni ru-translit bilan kirillga
+        #    (Hegseth, voennaya, sila kabi — lug'atda yo'q)
+        if _LATIN_IN_CYR.search(val):
+            before = val
+            val = _fix_ru_remaining_latin(val)
+            if val != before:
+                log.debug(f"  RU lotin fallback: '{before[:60]}' → '{val[:60]}'")
         if val and val[0].islower():
-            data[_f] = val[0].upper() + val[1:]
+            val = val[0].upper() + val[1:]
+        data[_f] = val
 
     # EN maydoni: bosh harf
     for _f in ("sarlavha_en", "jumla1_en", "jumla2_en", "script_en"):
         val = data.get(_f, "")
         if val and val[0].islower():
             data[_f] = val[0].upper() + val[1:]
+
+    # ══════════════════════════════════════════════════════════
+    # SCRIPT DUPLICATE HEADLINE FIX
+    # Agar script sarlavha bilan bir xil so'zlar bilan boshlansa — o'chirish.
+    # Voiceover sarlavhani takrorlamasligi kerak (kadr ustida sarlavha ko'rinadi).
+    # ══════════════════════════════════════════════════════════
+    def _title_words(text: str) -> set:
+        """Sarlavhadagi muhim so'zlar (stop-so'zlarsiz, kichik harf)."""
+        stops = {"va","bilan","dan","ga","ni","da","ham","bir","bu","u","o'","the","a",
+                 "an","and","or","of","in","on","at","to","by","is","are","was","were",
+                 "в","и","на","с","по","за","от","для","при","под","над","из","к"}
+        return {w.lower().strip(".,!?;:\"'«»") for w in text.split()
+                if len(w) > 3 and w.lower() not in stops}
+
+    def _strip_duplicate_start(script: str, sarlavha: str) -> str:
+        """Script birinchi jumla sarlavha bilan juda o'xshash bo'lsa — uni o'chirish."""
+        if not script or not sarlavha:
+            return script
+        # Birinchi jumlani ajratish
+        first_end = -1
+        for sep in (". ", "! ", "? ", ".\n"):
+            idx = script.find(sep)
+            if idx != -1:
+                if first_end == -1 or idx < first_end:
+                    first_end = idx + 1
+        if first_end <= 0 or first_end > 200:
+            return script  # Birinchi jumla topilmadi yoki juda uzun
+        first_sent = script[:first_end].strip()
+        title_kws  = _title_words(sarlavha)
+        sent_kws   = _title_words(first_sent)
+        if not title_kws:
+            return script
+        # 60%dan ko'p so'z mos kelsa — sarlavhani takrorlaydi
+        overlap = len(title_kws & sent_kws)
+        if overlap / len(title_kws) >= 0.60:
+            remainder = script[first_end:].strip()
+            if len(remainder) > 100:  # Qolgan qism yetarli bo'lsa
+                log.debug(f"  Script duplicate start removed: '{first_sent[:60]}'")
+                return remainder
+        return script
+
+    for _lang in ("uz", "ru", "en"):
+        _sc_f = f"script_{_lang}"
+        _sv_f = f"sarlavha_{_lang}"
+        _sc   = data.get(_sc_f, "")
+        _sv   = data.get(_sv_f, "")
+        if _sc and _sv:
+            data[_sc_f] = _strip_duplicate_start(_sc, _sv)
 
     # ── Eski nom uchun moslik ─────────────────────────────────
     data["sarlavha"]             = data.get("sarlavha_uz", "")
@@ -1150,8 +1571,7 @@ CRITICAL: sarlavha_ru, jumla1_ru, jumla2_ru — FAQAT RUSCHA (а,б,в,г,д...)
             if sc and len(sc.split()) >= 15:
                 words   = sc.split()
                 part    = " ".join(words[:70])
-                if _lang == "uz" and not _is_mostly_cyr(part) and _is_uzbek_latin(part):
-                    part = lat2cyr(part)
+                # UZ uchun lotin qoladi (lat2cyr QILMAYMIZ)
                 # So'nggi yarim jumlani kes (nuqta yoki undov bilan tugasin)
                 for sep in (". ", "! ", "? "):
                     last = part.rfind(sep)
@@ -1186,8 +1606,7 @@ CRITICAL: sarlavha_ru, jumla1_ru, jumla2_ru — FAQAT RUSCHA (а,б,в,г,д...)
             words = sc.split()
             half  = len(words) // 2
             part2 = " ".join(words[half: half + 60])
-            if _lang == "uz" and not _is_mostly_cyr(part2) and _is_uzbek_latin(part2):
-                part2 = lat2cyr(part2)
+            # UZ: lotin qoladi (lat2cyr QILMAYMIZ)
             for sep in (". ", "! ", "? "):
                 last = part2.rfind(sep)
                 if last > len(part2) // 2:

@@ -16,70 +16,146 @@ SEEN_LINKS_FILE = "output/seen_links.txt"
 
 # ── Yangilik ahamiyatlilik reytingi ──────────────────────────
 # Yuqori ball = muhimroq yangilik
+# MUHIM: faqat SARLAVHA da bo'lsa qo'shimcha 1.5x ko'paytiruvchi
 _MUHIM_WORDS = {
-    # Urush / inqiroz (10 ball)
-    "war":10, "attack":10, "strike":10, "invasion":10, "bomb":10,
-    "missile":10, "troops":10, "killed":10, "casualties":10,
-    "ceasefire":10, "genocide":10, "massacre":10, "hostage":10,
-    "nuclear":10, "weapons":10, "explosion":10, "earthquake":10,
-    "tsunami":10, "hurricane":10, "flood":10, "crisis":8,
-    # Siyosat / diplomatiya (8 ball)
-    "sanctions":8, "treaty":8, "summit":8, "election":8, "coup":8,
-    "president":7, "minister":7, "parliament":7, "congress":7,
-    "referendum":8, "protest":7, "riot":8, "arrested":7,
-    "sentenced":7, "charged":7, "accused":7, "resigned":7,
-    "assassination":10, "impeach":8,
-    # Iqtisodiyot (6 ball)
-    "tariff":6, "trade":5, "economy":5, "inflation":6, "recession":7,
-    "gdp":5, "oil":6, "energy":5, "bank":5, "market":4, "stock":4,
-    "deal":5, "agreement":5, "accord":5, "bilateral":5,
-    # Munosabatlar / diplomatiya (5 ball)
-    "diplomatic":5, "relations":4, "alliance":5, "nato":6, "un":5,
-    "united nations":6, "eu":5, "imf":5, "g7":6, "g20":6, "brics":5,
-    # Taniqli shaxslar (4 ball)
-    "trump":5, "biden":4, "putin":5, "xi":4, "zelensky":5,
-    "macron":4, "modi":4, "netanyahu":5, "erdogan":4,
+    # ── Urush / halokatlar (12 ball) ─────────────────────────
+    "war":12, "attack":12, "airstrike":12, "strike":10, "invasion":12,
+    "bomb":11, "bombing":12, "missile":11, "rockets":10,
+    "troops":10, "soldiers":9, "military":8,
+    "killed":12, "dead":10, "deaths":11, "casualties":11,
+    "wounded":10, "injured":9,
+    "ceasefire":11, "genocide":13, "massacre":13, "hostage":12,
+    "nuclear":12, "chemical weapon":14, "biological weapon":14,
+    "explosion":11, "earthquake":12, "tsunami":13,
+    "hurricane":11, "flood":10, "wildfire":9, "disaster":9,
+    # ── Qatl / hibsga olish (o'ta muhim) ─────────────────────
+    "executed":13, "execution":13, "executes":13,
+    "hanged":12, "death penalty":13, "death sentence":13,
+    "sentenced to death":14,
+    "assassinated":13, "assassination":13,
+    # ── Geopolitik inqirozlar ─────────────────────────────────
+    "crisis":9, "conflict":9, "offensive":10, "siege":11,
+    "blockade":10, "occupation":10, "annexed":10, "annexed":10,
+    "coup":12, "uprising":10, "civil war":13, "ethnic cleansing":14,
+    "famine":11, "starvation":11, "humanitarian":8,
+    # ── Siyosat (8 ball) ──────────────────────────────────────
+    "sanctions":8, "treaty":8, "summit":8, "election":8,
+    "president":6, "parliament":6, "congress":6,
+    "referendum":8, "protest":7, "riot":9,
+    "arrested":7, "detained":7, "imprisoned":8,
+    "sentenced":7, "charged":7, "accused":6, "resigned":8,
+    "impeach":9, "overthrow":10,
+    # ── Diplomatiya (6 ball) ──────────────────────────────────
+    "sanctions":8, "diplomatic":5, "relations":4,
+    "alliance":5, "nato":7, "un":5,
+    "united nations":7, "eu":5, "imf":5, "g7":7, "g20":7,
+    # ── Iqtisodiyot (5 ball) ──────────────────────────────────
+    "tariff":6, "trade war":9, "economy":5, "inflation":6,
+    "recession":8, "gdp":5, "oil":6, "energy":5,
+    "bankruptcy":7, "default":7, "collapse":8,
+    # ── Taniqli shaxslar (5 ball, faqat sarlavhada bo'lsa) ────
+    "trump":5, "putin":5, "zelensky":5, "netanyahu":5,
+    "xi jinping":6, "xi":4, "biden":4, "macron":4,
+    "modi":4, "erdogan":4, "khamenei":6,
+}
+
+# ── Mamlakat/mintaqa bonusi (sarlavhada bo'lsa +ball) ─────────
+# Faol urush/inqiroz hududlari — yuqori ustuvorlik
+_GEO_BONUS = {
+    "gaza":8, "israel":6, "palestine":7, "west bank":7,
+    "ukraine":7, "russia":5, "kyiv":6, "moscow":5,
+    "iran":7, "tehran":6, "syria":6, "damascus":5,
+    "lebanon":6, "beirut":5, "hezbollah":7, "hamas":7,
+    "sudan":7, "khartoum":6, "sahel":6, "mali":6,
+    "north korea":7, "taiwan":7, "china sea":7,
+    "kashmir":6, "pakistan":5, "afghanistan":6, "kabul":5,
+    "somalia":6, "ethiopia":5, "niger":6, "burkina":6,
+    "venezuela":5, "haiti":6, "myanmar":7,
+    "yemen":7, "houthi":7, "saudi":5,
+}
+
+# ── Mahalliy siyosat / unchalik muhim emas ─────────────────────
+# Bu so'zlar sarlavhada bo'lsa jarima
+_LOCAL_POLITICS_PENALTY = {
+    "crackdown on", "promises to", "pledges to", "vows to",
+    "plans to", "proposes", "considering", "weighing",
+    "rave", "nightclub", "party ban", "festival ban",
+    "drug law", "cannabis", "marijuana law",
+    "local election", "municipal", "city council",
+    "regional", "provincial", "county",
 }
 
 _SOFT_WORDS = {
     # Muxbir sayohati / shaxsiy hikoyalar — xabar emas
-    "reporter", "journalist", "correspondent", "our reporter", "i visited",
-    "i spent", "i met", "i talked", "i asked", "i went to", "a day in",
-    "a week in", "a year in", "behind the scenes", "inside story",
-    "personal story", "first person", "memoir",
+    "reporter", "journalist", "correspondent", "our reporter",
+    "i visited", "i spent", "i met", "i talked",
+    "behind the scenes", "inside story", "personal story",
+    "first person", "memoir",
     # Feature / tahlil — shoshilinch emas
-    "history of", "how it works", "explainer", "explained", "what is",
-    "what are", "why does", "opinion", "analysis", "commentary",
-    "in pictures", "photo essay", "gallery",
+    "history of", "how it works", "explainer", "explained",
+    "what is", "what are", "why does", "opinion",
+    "commentary", "in pictures", "photo essay", "gallery",
     # Madaniyat / sport — yuqori ahamiyatli emas
     "oscars", "emmys", "grammys", "fashion week", "film festival",
     "celebrity", "actor", "singer", "musician", "pop star",
+    # Maishiy / kundalik hayot — siyosiy emas
+    "recipe", "cooking", "food review", "restaurant",
+    "travel guide", "holiday", "vacation", "tourism",
+    "wildlife", "nature walk", "gardening",
+    # Rave/party/concert — past ustuvorlik
+    "rave party", "rave scene", "illegal rave",
+    "music festival", "concert ban", "nightlife",
 }
 
+
 def _score_article(article: dict) -> float:
-    """Maqolaning ahamiyatlilik ballini hisoblash."""
-    title = article.get("title","").lower()
-    desc  = article.get("description","").lower()
-    text  = title + " " + desc
+    """Maqolaning ahamiyatlilik ballini hisoblash.
+
+    Strategiya:
+    - SARLAVHA da kalit so'z → 1.5x ko'paytiruvchi (sarlavha muhimroq)
+    - Tavsif da kalit so'z → 1x
+    - Geopolitik mintaqa bonusi (faqat sarlavha)
+    - Mahalliy siyosat / soft news jarima
+    """
+    title = article.get("title", "").lower()
+    desc  = article.get("description", "").lower()
+
     score = 0.0
 
-    # Kalit so'zlar bo'yicha ball
+    # ── Kalit so'zlar: sarlavhada 1.5x, tavsifda 1x ──────────
     for word, pts in _MUHIM_WORDS.items():
-        if word in text:
-            score += pts
+        in_title = word in title
+        in_desc  = word in desc
+        if in_title:
+            score += pts * 1.5   # sarlavha muhimroq
+        elif in_desc:
+            score += pts * 1.0
 
-    # Soft news jarima: -8 ball
+    # ── Geopolitik mintaqa bonusi (faqat sarlavha) ────────────
+    for geo, bonus in _GEO_BONUS.items():
+        if geo in title:
+            score += bonus
+
+    # ── Mahalliy siyosat jarima (sarlavhada) ──────────────────
+    for phrase in _LOCAL_POLITICS_PENALTY:
+        if phrase in title:
+            score -= 10
+            break
+
+    # ── Soft news jarima ──────────────────────────────────────
     for sw in _SOFT_WORDS:
-        if sw in text:
-            score -= 8
-            break  # bitta topildi — yetarli
+        if sw in title or sw in desc:
+            score -= 10
+            break
 
-    # Yangilik yangiligi: so'nggi 6 soat = +5 ball, 6-24 soat = 0, 24-48 soat = -5
+    # ── Yangilik yangiligi ────────────────────────────────────
     pub = article.get("published_ts")
     if pub:
         age_h = (time.time() - pub) / 3600
-        if age_h <= 6:
-            score += 5
+        if age_h <= 3:
+            score += 7    # juda yangi
+        elif age_h <= 6:
+            score += 4
         elif age_h > 24:
             score -= 5
 

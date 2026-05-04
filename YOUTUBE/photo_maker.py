@@ -656,9 +656,9 @@ def upload_photo_video(video_path: str, data: dict, lang: str) -> str | None:
         return None
 
     try:
-        youtube = youtube_auth()
+        youtube = youtube_auth(lang)
     except Exception as e:
-        print(f"  YouTube auth xato: {e}")
+        print(f"  YouTube auth xato ({lang}): {e}")
         return None
 
     sarlavha  = data.get("sarlavha", "")

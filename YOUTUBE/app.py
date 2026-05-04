@@ -163,8 +163,15 @@ def _title_ok(text: str, lang: str) -> bool:
     bad = {"none", "n/a", "sarlavha", "заголовок", "headline", "title", "null", ""}
     if t.lower() in bad:
         return False
-    if lang == "uz" and not any(c in t for c in _CYR):
-        return False
+    # UZ endi LOTIN alifbosida — kirill talabi olib tashlandi
+    if lang == "uz":
+        # Lotin UZ: asosan ASCII harflar bo'lishi kerak
+        alpha = [c for c in t if c.isalpha()]
+        if alpha:
+            cyr_ratio = sum(1 for c in alpha if c in _CYR) / len(alpha)
+            # Agar >80% kirill → bu RU matn, UZ emas
+            if cyr_ratio > 0.80:
+                return False
     # ALL CAPS tekshiruv: ≥70% harflar katta bo'lsa — noto'g'ri
     letters = [c for c in t if c.isalpha()]
     if len(letters) >= 6 and sum(1 for c in letters if c.isupper()) / len(letters) >= 0.70:
@@ -243,15 +250,26 @@ def _parse_queue_item(qfile: str, seen: set) -> dict | None:
                 alpha = [c for c in text if c.isalpha()]
                 if not alpha:
                     return True
-                if lc in ("uz", "ru"):
+                if lc == "ru":
+                    # Rus matni: asosan kirill bo'lishi kerak
                     if sum(1 for c in alpha if c.isascii()) / len(alpha) > 0.15:
                         return True
                     if sum(1 for c in alpha if c in _CYR_UZ) / len(alpha) < 0.60:
                         return True
+                elif lc == "uz":
+                    # UZ LOTIN: ASCII dominant bo'lishi normal
+                    # Faqat agar >85% kirill bo'lsa — bu RU matn, UZ emas
+                    cyr_r = sum(1 for c in alpha if c in _CYR_UZ) / len(alpha)
+                    if cyr_r > 0.85:
+                        return True  # Kirill UZ → buzuq
                 elif lc == "en":
                     if sum(1 for c in alpha if c in _CYR_UZ) / len(alpha) > 0.30:
                         return True
                 return False
+
+            def _is_corrupt_fixed(text, lc):
+                """Fixed versiya tuzatilgan sarlavha uchun."""
+                return _is_corrupt(text, lc)
 
             for fix_lang in ("uz", "ru", "en"):
                 val = sarlavhalar.get(fix_lang, "")
@@ -338,8 +356,17 @@ def process_queue():
     # ── Lock fayl — paralel ishga tushishni oldini olish ────────
     _lock = f"{QUEUE_DIR}/.lock"
     if os.path.exists(_lock):
-        log.info("⏳ process_queue allaqachon ishlayapti — o'tkazildi")
-        return
+        # Eski lock (30 daqiqadan ko'p) — avtomatik o'chirish
+        try:
+            age_min = (time.time() - os.path.getmtime(_lock)) / 60
+            if age_min > 30:
+                os.remove(_lock)
+                log.warning(f"⚠️  Eski lock fayl o'chirildi ({age_min:.0f} daqiqa eski)")
+            else:
+                log.info(f"⏳ process_queue ishlayapti ({age_min:.0f} daq) — o'tkazildi")
+                return
+        except Exception:
+            pass
     try:
         open(_lock, "w").close()   # Lock yaratish
     except Exception:
@@ -548,19 +575,41 @@ def _process_queue_inner():
 
 def run_daily_shorts_all():
     """
-    Barcha 3 tilda (uz, ru, en) Daily Shorts yaratish va YouTube ga yuklash.
-    Bu funksiya APScheduler tomonidan kuniga 4 mahal chaqiriladi.
+    Barcha 3 tilda (uz, ru, en) Daily Shorts yaratish — KUNIGA BIR MARTA.
+    Har til uchun lock fayl tekshiriladi — bugun allaqachon yaratilgan bo'lsa o'tkaziladi.
+    Bu funksiya APScheduler tomonidan kuniga 12 mahal chaqiriladi,
+    lekin har til uchun faqat BIRINCHI muvaffaqiyatli ishga tushishda video yaratiladi.
     """
     log.info("📰 Daily Shorts (uz/ru/en) ishga tushdi...")
+    today_str  = datetime.now(TASHKENT).strftime("%Y-%m-%d")
+    output_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "output")
+    os.makedirs(output_dir, exist_ok=True)
+
     try:
         sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
         from daily_shorts import make_daily_shorts
         for lg in ["uz", "ru", "en"]:
+            # ── Kunlik lock tekshiruvi ────────────────────────────
+            lock_file = os.path.join(output_dir, f"daily_shorts_{lg}_lock.txt")
+            if os.path.exists(lock_file):
+                try:
+                    if open(lock_file, encoding="utf-8").read().strip() == today_str:
+                        log.info(f"  ⏭️  Daily Shorts ({lg.upper()}) bugun allaqachon yaratilgan — o'tkazildi")
+                        continue
+                except Exception:
+                    pass  # Lock fayl o'qilmadi — davom etish
+
             try:
                 log.info(f"  → Daily Shorts ({lg.upper()}) yaratilmoqda...")
                 result = make_daily_shorts(lg)
                 if result:
                     log.info(f"  ✅ Daily Shorts ({lg.upper()}) tayyor: {result}")
+                    # Lock fayl yozish — bugun qayta yaratilmasin
+                    try:
+                        with open(lock_file, "w", encoding="utf-8") as lf:
+                            lf.write(today_str)
+                    except Exception:
+                        pass
                 else:
                     log.warning(f"  ⚠️  Daily Shorts ({lg.upper()}) yaratilmadi")
             except Exception as e:
@@ -571,163 +620,51 @@ def run_daily_shorts_all():
 
 def run_analysis_all():
     """
-    Navbatdagi so'nggi DIGEST_BATCH ta yangilikdan tahlil video yaratish.
-    Kunda 3 marta chaqiriladi (08:00, 14:00, 20:00 Toshkent).
-    Tahlil video = uzunroq naratsiya + 2 rasm/yangilik + ob-havo ticker + timestamps.
+    OLIB TASHLANDI: Tahlil video pipeline o'chirildi (foydalanuvchi buyrug'i).
+    Tahlil videolar sifatsiz edi — 5 ta yangilik jamlangan, faqat birida audio bor,
+    qolganlari 20-40 soniyalik jim video. Shu sababli butunlay o'chirildi.
     """
-    log.info("🎙 Tahlil pipeline (uz/ru/en) ishga tushdi...")
-    from analysis_maker import analysis_pipeline
+    log.info("🎙 Tahlil pipeline o'chirilgan — o'tkazildi (disabled by user request)")
 
-    seen = load_seen()
-    done_dir = f"{QUEUE_DIR}/done"
 
-    # Queue + done papkalardan so'nggi DIGEST_BATCH ta fayl (modified time bo'yicha)
-    queue_files = [
-        f for f in glob.glob(f"{QUEUE_DIR}/*.json")
-        if not any(f.endswith(suf) for suf in _STATUS_SUFFIXES)
-    ]
-    done_files  = glob.glob(f"{done_dir}/*.json")
-    all_cands   = sorted(
-        queue_files + done_files,
-        key=os.path.getmtime, reverse=True
-    )
-    recent_files = all_cands[:DIGEST_BATCH]
+def run_upload_pending():
+    """
+    output/videos/ dagi yuklnmagan videolarni YouTube ga yuklash.
+    Kvota-aware: MAX_UPLOADS (default=6) ta videogacha, kvota tugasa to'xtatish.
+    Har upload uploaded.json ga yoziladi — qayta yuklanmaydi.
+    """
+    log.info("📤 YouTube upload pending...")
+    try:
+        from upload_pending import _select_files, upload_video, QuotaError, \
+                                   _load_uploaded, _save_uploaded, _detect_lang, \
+                                   _detect_type, VIDEOS_DIR, MAX_UPLOADS, TODAY
+        import glob as _gl
+        all_mp4  = sorted(_gl.glob(str(VIDEOS_DIR / "*.mp4")))
+        uploaded = _load_uploaded()
+        selected = _select_files(all_mp4, uploaded, today_only=True)
 
-    if not recent_files:
-        log.info("Tahlil uchun yangilik yo'q")
-        return
+        if not selected:
+            log.info("  Yuklanishi kerak bo'lgan yangi video yo'q")
+            return
 
-    log.info(f"  Tahlil uchun {len(recent_files)} ta yangilik")
-
-    parsed = []
-    for qfile in recent_files:
-        try:
-            with open(qfile, "r", encoding="utf-8") as f:
-                data = json.load(f)
-            article = data.get("article", {})
-            url     = article.get("link", "")
-            title   = article.get("title", "")
-            if url and is_russian_source(url):
-                continue
-
-            scripts     = data.get("scripts", {})
-            sarlavhalar = data.get("sarlavha", {})
-            keywords_en = data.get("keywords_en", [])
-            location    = data.get("location", {})
-            daraja      = data.get("daraja", "xabar")
-            jumlalar    = data.get("jumla", {})
-            en_title    = sarlavhalar.get("en") or title
-
-            parsed.append({
-                "title": title, "en_title": en_title,
-                "sarlavhalar": sarlavhalar,
-                "scripts": scripts, "jumlalar": jumlalar,
-                "location": location, "daraja": daraja,
-                "article_url": url, "keywords_en": keywords_en,
-            })
-        except Exception as e:
-            log.debug(f"Parse xato {qfile}: {e}")
-
-    if not parsed:
-        log.info("  Yaroqli yangilik yo'q")
-        return
-
-    def _is_cyr_text(text: str, threshold: float = 0.35) -> bool:
-        """Matn kamida threshold% Kirill harfdan iboratmi?"""
-        alpha = [c for c in text if c.isalpha()]
-        if not alpha:
-            return False
-        return sum(1 for c in alpha if c in _CYR) / len(alpha) >= threshold
-
-    def _clean_field(text: str, lang: str) -> str:
-        """RU/UZ uchun inglizcha matnni o'tkazib yuborish."""
-        if not text or not text.strip():
-            return ""
-        if lang in ("uz", "ru") and not _is_cyr_text(text):
-            return ""   # Inglizcha matn — bo'sh qaytarish
-        return text.strip()
-
-    for lang in ["uz", "ru", "en"]:
-        items = []
-        for raw in parsed:
-            raw_sarlavha = raw["sarlavhalar"].get(lang, "")
-            sarlavha = _clean_field(raw_sarlavha, lang)
-            # EN uchun inglizcha fallback OK — RU/UZ uchun EMAS
-            if not sarlavha and lang == "en":
-                sarlavha = raw.get("title", "")
-
-            # ── Script olish ──────────────────────────────────────
-            # UZ: script LOTIN (TTS uchun) — Kirill tekshiruvi KERAK EMAS
-            # RU: script Kirill bo'lishi kerak (_clean_field)
-            # EN: script inglizcha — Kirill tekshiruvi KERAK EMAS
-            raw_script = raw["scripts"].get(lang, "").strip()
-            if lang == "uz":
-                # UZ Latin skriptini to'g'ridan filtrsiz olish
-                script = raw_script
-            elif lang == "en":
-                # EN: script bo'sh bo'lsa — article description ni ishlatish
-                script = raw_script or raw.get("article", {}).get("description", "")
-                script = script.strip()
-            else:
-                # RU: Kirill tekshiruvi (inglizcha content kirmasin)
-                script = _clean_field(raw_script, lang)
-
-            jumla_raw = raw["jumlalar"].get(lang, "")
-            jumla1 = _clean_field(jumla_raw, lang) or (script[:200] if script else "")
-
-            if not sarlavha or len(sarlavha.strip()) < 5:
-                continue
-            items.append({
-                "sarlavha":    sarlavha,
-                "jumla1":      jumla1,
-                "script":      script,
-                "location":    raw["location"].get(lang, ""),
-                "daraja":      raw["daraja"],
-                "article_url": raw["article_url"],
-                "en_title":    raw["en_title"],
-                "keywords_en": raw["keywords_en"],
-            })
-
-        if len(items) < 2:
-            log.warning(f"  [{lang.upper()}] Yetarli tahlil matni yo'q ({len(items)} ta)")
-            continue
-
-        log.info(f"  [{lang.upper()}] {len(items)} ta yangilik tahlil qilinmoqda...")
-        try:
-            result = analysis_pipeline(items, lang)
-            # analysis_pipeline endi (video_path, yt_url) qaytaradi
-            if isinstance(result, tuple):
-                video_path, yt_url = result
-            else:
-                video_path, yt_url = result, ""
-
-            if video_path:
-                log.info(f"  ✅ [{lang.upper()}] Tahlil tayyor: {video_path}")
-
-                # ── Faqat Facebook YT link post (Telegram YO'Q) ──
-                if yt_url:
-                    try:
-                        from social_poster import post_facebook_yt_link
-                        top_sarlavha = items[0].get("sarlavha", "")
-                        top_jumla    = items[0].get("jumla1",   "")
-                        top_loc      = items[0].get("location",  "")
-                        daraja_val   = items[0].get("daraja", "xabar")
-
-                        fb_ok = post_facebook_yt_link(
-                            yt_url      = yt_url,
-                            title       = top_sarlavha,
-                            description = top_jumla,
-                            lang        = lang,
-                            daraja      = daraja_val,
-                            location    = top_loc,
-                        )
-                        log.info(f"  {'✅' if fb_ok else '⚠️ '} Facebook Tahlil [{lang.upper()}]")
-                    except Exception as _sp_e:
-                        log.error(f"  Tahlil social post xato [{lang.upper()}]: {_sp_e}", exc_info=True)
-            else:
-                log.warning(f"  ⚠️  [{lang.upper()}] Tahlil yaratilmadi")
-        except Exception as e:
-            log.error(f"  [{lang.upper()}] Tahlil xato: {e}", exc_info=True)
+        log.info(f"  Yuklash uchun: {len(selected)} ta (max {MAX_UPLOADS} ta yuklanadi)")
+        ok = failed = 0
+        for prio, fname, fpath, vtype in selected[:MAX_UPLOADS]:
+            lang = _detect_lang(fname)
+            try:
+                vid_id = upload_video(fpath, lang, vtype)
+                if vid_id:
+                    uploaded.add(fname)
+                    _save_uploaded(uploaded)
+                    ok += 1
+                else:
+                    failed += 1
+            except QuotaError:
+                log.warning(f"  ⏸️  Kvota tugadi. {ok} ta yuklandi.")
+                break
+        log.info(f"  ✅ Yuklandi: {ok} ta | Xato: {failed} ta")
+    except Exception as e:
+        log.error(f"  run_upload_pending xato: {e}", exc_info=True)
 
 
 def main():
@@ -741,8 +678,8 @@ def main():
         run_daily_shorts_all()
         return
 
-    if "--analysis" in sys.argv:
-        run_analysis_all()
+    if "--upload" in sys.argv:
+        run_upload_pending()
         return
 
     from apscheduler.schedulers.blocking import BlockingScheduler
@@ -771,16 +708,19 @@ def main():
         )
     log.info(f"⏰ Daily Shorts: {', '.join(f'{h:02d}:30' for h in shorts_hours)} (Toshkent) — 12/kun")
 
-    # ── Tahlil video — kuniga 1 marta (20:00 Toshkent) ──────────
+    # ── YouTube upload — kuniga 6 mahal (har 4 soatda) ───────────
+    # (Tahlil pipeline o'chirildi — sifatsiz video edi)
+    # Kvota: 10,000 unit/kun, upload = 1,600 unit → max 6/kun
+    # Strategiya: biriktirilgan videni uploaddan keyin tracking-file ga yozish
     scheduler.add_job(
-        run_analysis_all,
-        CronTrigger(hour=20, minute=0, timezone=TASHKENT),
-        id="analysis_daily",
+        run_upload_pending,
+        CronTrigger(hour="0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23", minute=15, timezone=TASHKENT),
+        id="upload_pending",
         misfire_grace_time=600,
     )
-    log.info("⏰ Tahlil (kunlik digest): 20:00 (Toshkent) — 1/kun")
+    log.info("⏰ YouTube upload: har soat :15 da (0:15–23:15, Toshkent) — kun bo'yi avtomatik")
 
-    log.info("⏰ Har 30 daqiqada navbat tekshiriladi")
+    log.info("⏰ Har 15 aqiqada navbat tekshiriladi")
     log.info("Ctrl+C — to'xtatish\n")
     process_queue()
     scheduler.start()

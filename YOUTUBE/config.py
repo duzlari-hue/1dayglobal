@@ -102,8 +102,30 @@ AUDIO_FX = {
 
 # YouTube auth
 CLIENT_SECRETS = "client_secrets.json"
-TOKEN_FILE     = "youtube_token.json"
+TOKEN_FILE     = "youtube_token.json"   # eskirgan — TOKEN_FILES ishlatilsin
 SCOPES         = [
     "https://www.googleapis.com/auth/youtube.upload",
     "https://www.googleapis.com/auth/youtube",          # playlist uchun
 ]
+
+# ── 3 ta alohida kanal — har til uchun o'z token fayli ──────────
+# UZ → @1kunnews   (hozirgi kanal)
+# EN → @1daykun
+# RU → @1dennews
+#
+# Avval --auth uz/en/ru orqali har birini autentifikatsiya qiling:
+#   py -3 youtube_maker.py --auth uz
+#   py -3 youtube_maker.py --auth en
+#   py -3 youtube_maker.py --auth ru
+
+TOKEN_FILES = {
+    "uz": "youtube_token_uz.json",
+    "en": "youtube_token_en.json",
+    "ru": "youtube_token_ru.json",
+}
+
+YT_CHANNELS = {
+    "uz": "https://www.youtube.com/@1kunnews",
+    "en": "https://www.youtube.com/@1daykun",
+    "ru": "https://www.youtube.com/@1dennews",
+}

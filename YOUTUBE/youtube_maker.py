@@ -1882,11 +1882,38 @@ def build_video(voice_file, voice_dur, sarlavha, daraja, location,
 
 
 # ── YouTube auth ──────────────────────────────────────────────
-def youtube_auth():
+# Per-til token fayllari:
+#   UZ → youtube_token_uz.json  (@1kunnews)
+#   EN → youtube_token_en.json  (@1daykun)
+#   RU → youtube_token_ru.json  (@1dennews)
+_AUTH_TOKEN_FILES = {
+    "uz": "youtube_token_uz.json",
+    "en": "youtube_token_en.json",
+    "ru": "youtube_token_ru.json",
+}
+_AUTH_CHANNELS = {
+    "uz": "https://www.youtube.com/@1kunnews",
+    "en": "https://www.youtube.com/@1daykun",
+    "ru": "https://www.youtube.com/@1dennews",
+}
+
+
+def youtube_auth(lang: str = "uz"):
+    """Til bo'yicha YouTube kanalga autentifikatsiya.
+    lang: "uz" | "en" | "ru"
+    Qaytaradi: youtube API client
+    """
+    token_fname = _AUTH_TOKEN_FILES.get(lang, f"youtube_token_{lang}.json")
+    token_path  = token_fname   # Joriy papkada (YOUTUBE/)
+    channel_url = _AUTH_CHANNELS.get(lang, "")
+
+    print(f"\n  📺 YouTube kanal: {channel_url}")
+    print(f"  🔑 Token fayl: {token_fname}")
+
     creds = None
-    if os.path.exists(TOKEN_FILE):
+    if os.path.exists(token_path):
         try:
-            creds = Credentials.from_authorized_user_file(TOKEN_FILE, SCOPES)
+            creds = Credentials.from_authorized_user_file(token_path, SCOPES)
         except Exception:
             creds = None
 
@@ -1899,22 +1926,29 @@ def youtube_auth():
                 print(f"   ⚠️  Token yangilash xato ({e}) — qayta autentifikatsiya...")
                 creds = None
                 try:
-                    os.remove(TOKEN_FILE)
+                    os.remove(token_path)
                 except Exception:
                     pass
 
         if not creds or not creds.valid:
-            print("   🔐 Browser orqali YouTube ga kirishingiz kerak...")
-            flow = InstalledAppFlow.from_client_secrets_file(
-                CLIENT_SECRETS, SCOPES)
+            print(f"\n  🔐 {lang.upper()} kanal uchun brauzer orqali kirishingiz kerak.")
+            print(f"  ⚠️  Muhim: {channel_url} kanalga mos Google akkauntiga kiring!\n")
+            flow = InstalledAppFlow.from_client_secrets_file(CLIENT_SECRETS, SCOPES)
             creds = flow.run_local_server(
-                port=0, prompt="consent", access_type="offline")
-            print("   ✅ Token saqlandi!")
+                port=0, prompt="consent", access_type="offline"
+            )
+            print(f"  ✅ {lang.upper()} token saqlandi → {token_fname}")
 
-        with open(TOKEN_FILE, "w") as f:
+        with open(token_path, "w") as f:
             f.write(creds.to_json())
 
     return build("youtube", "v3", credentials=creds)
+
+
+# ── Eski TOKEN_FILE bilan muvofiqlik (youtube_maker ichki ishlatish uchun) ──
+def youtube_auth_legacy():
+    """Eski umumiy token (youtube_token.json) — ichki muvofiqlik uchun."""
+    return youtube_auth("uz")
 
 
 def upload_to_youtube(youtube, video_file, title, description, tags):
@@ -2498,7 +2532,7 @@ def youtube_pipeline(data):
     youtube_enabled = os.getenv("YOUTUBE_ENABLED", "false").lower() == "true"
     if youtube_enabled:
         print("  4  YouTube...")
-        yt      = youtube_auth()
+        yt      = youtube_auth(lang)
         brand   = _ll(lang, "brand")
         handle  = _ll(lang, "handle")
         _yt_cta = {
@@ -2548,3 +2582,57 @@ def youtube_pipeline(data):
         if shorts:
             print(f"   📱 Shorts: {shorts}")
         return video_file
+
+
+# ══════════════════════════════════════════════════════════════
+# CLI: py -3 youtube_maker.py --auth uz|en|ru
+# ══════════════════════════════════════════════════════════════
+if __name__ == "__main__":
+    if "--auth" in sys.argv:
+        idx = sys.argv.index("--auth")
+        if idx + 1 < len(sys.argv):
+            auth_lang = sys.argv[idx + 1].lower().strip()
+        else:
+            auth_lang = "uz"
+
+        valid = ("uz", "en", "ru")
+        if auth_lang not in valid:
+            print(f"❌ Noto'g'ri til: '{auth_lang}'")
+            print(f"   Foydalanish: py -3 youtube_maker.py --auth uz|en|ru")
+            sys.exit(1)
+
+        print("=" * 60)
+        print(f"  YouTube autentifikatsiya — {auth_lang.upper()} kanal")
+        print("=" * 60)
+        try:
+            yt = youtube_auth(auth_lang)
+            # Kanal ma'lumotlarini tekshirish
+            ch = yt.channels().list(part="snippet", mine=True).execute()
+            items = ch.get("items", [])
+            if items:
+                ch_title = items[0]["snippet"]["title"]
+                ch_id    = items[0]["id"]
+                print(f"\n  ✅ Muvaffaqiyatli ulandi!")
+                print(f"  📺 Kanal: {ch_title}")
+                print(f"  🆔 ID: {ch_id}")
+                print(f"  🔑 Token: youtube_token_{auth_lang}.json")
+                expected = _AUTH_CHANNELS.get(auth_lang, "")
+                print(f"\n  ⚠️  Tekshiring: bu kanal {expected} ga mos kelishi kerak!")
+            else:
+                print(f"\n  ✅ Token saqlandi: youtube_token_{auth_lang}.json")
+                print(f"  ⚠️  Kanal ma'lumotlari olinmadi — to'g'ri akkauntga kirganingizni tekshiring.")
+        except Exception as e:
+            print(f"\n  ❌ Xato: {e}")
+            sys.exit(1)
+
+    else:
+        print("Foydalanish:")
+        print("  py -3 youtube_maker.py --auth uz    # @1kunnews (O'zbek)")
+        print("  py -3 youtube_maker.py --auth en    # @1daykun  (English)")
+        print("  py -3 youtube_maker.py --auth ru    # @1dennews (Russian)")
+        print("")
+        print("Mavjud tokenlar:")
+        for lg, fname in _AUTH_TOKEN_FILES.items():
+            exists = "✅" if os.path.exists(fname) else "❌"
+            ch = _AUTH_CHANNELS.get(lg, "")
+            print(f"  {exists} [{lg.upper()}] {fname} → {ch}")

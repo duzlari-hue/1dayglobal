@@ -49,17 +49,17 @@ MUSIC_VOL     = 0.28    # Fon musiqasi balandligi (eshitilarli bo'lsin)
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 
-# Rang palitasi
-C_BG      = (4,   8,  20)   # Qoramtir ko'k fon
-C_DARK    = (10,  18,  38)
-C_NAVY    = (8,   20,  55)
-C_GOLD    = (255, 185,  0)   # Yorqin oltin
-C_RED     = (220,  30,  30)  # Qizil
+# 1DAY GLOBAL brand colors: qora / oq / qizil
+C_BG      = (0,   0,   0)   # Pure black
+C_DARK    = (12,  12,  12)
+C_NAVY    = (18,  18,  18)
+C_RED     = (204,  0,   0)   # Brand red
 C_WHITE   = (255, 255, 255)
-C_LGRAY   = (180, 190, 210)
-C_ACCENT  = (0,  140, 255)   # Ko'k aksent
-C_GREEN   = (0,  200,  80)   # Yashil
-C_TICKER  = (15,  25,  55)   # Ticker foni
+C_LGRAY   = (150, 150, 150)
+C_ACCENT  = (204,  0,   0)   # Red (ko'k o'rniga)
+C_GREEN   = (200, 200, 200)  # Oq-kulrang
+C_TICKER  = (15,  15,  15)   # Ticker foni (deyarli qora)
+C_GOLD    = (255, 255, 255)  # Oltin → oq (legacy alias)
 
 
 # ─────────────────────────────────────────────────────────────
@@ -381,13 +381,12 @@ def _make_infographic_card(
     draw = ImageDraw.Draw(img)
 
     # Aksent chiziq
-    draw.rectangle([(0, 0), (8, VH)], fill=C_GOLD)
-    draw.rectangle([(0, 0), (VW, 5)], fill=C_GOLD)
+    draw.rectangle([(0, 0), (8, VH)], fill=C_RED)
+    draw.rectangle([(0, 0), (VW, 5)], fill=C_RED)
 
     # Yuqori: kanal nomi
-    brand = {"uz": "1КУН GLOBAL", "ru": "1ДЕНЬ GLOBAL", "en": "1DAY GLOBAL"}.get(lang, "1KUN")
-    draw.text((VW // 2, 35), brand, font=_font(26), fill=C_GOLD, anchor="mm")
-    draw.rectangle([(0, 60), (VW, 63)], fill=C_GOLD)
+    draw.text((VW // 2, 35), "1DAY GLOBAL", font=_font(26), fill=C_WHITE, anchor="mm")
+    draw.rectangle([(0, 60), (VW, 63)], fill=C_RED)
 
     # Sarlavha qisqa (2 qator)
     if sarlavha:
@@ -528,53 +527,90 @@ def _draw_bottom_ticker(draw, next_title: str, lang: str, story_num: int, total:
 # ─────────────────────────────────────────────────────────────
 # KARTA 1: Ochilish kartasi (channel intro)
 # ─────────────────────────────────────────────────────────────
-def _make_open_card(lang: str, story_count: int, out_path: str):
-    img  = Image.new("RGB", (VW, VH), C_BG)
-    _gradient_rect(ImageDraw.Draw(img), 0, 0, VW, VH, C_BG, C_DARK)
-    img  = _draw_map_bg(img, alpha=30)
+def _make_open_card(lang: str, story_count: int, out_path: str,
+                    stories: list = None):
+    """
+    1DAY GLOBAL digest overview (16:9) — Image 5 uslubi:
+      · Qora top bar: '1DAY GLOBAL · DIGEST' + qizil nuqta + sana
+      · Chap panel (38%): krem fon, 'THE WORLD TODAY' katta, duration
+      · O'ng panel (62%): qora fon, 01–05 numbered story list oq matn
+    stories: [{"sarlavha": str}, ...] — ixtiyoriy sarlavhalar
+    """
+    img  = Image.new("RGB", (VW, VH), (245, 240, 232))   # krem fon
     draw = ImageDraw.Draw(img)
 
-    # Vertikal aksent chiziqlar
-    draw.rectangle([(0, 0), (6, VH)], fill=C_RED)
-    draw.rectangle([(VW - 6, 0), (VW, VH)], fill=C_RED)
+    # ── TOP BAR (qora, 46px) ──────────────────────────────────
+    top_h = 46
+    draw.rectangle([(0, 0), (VW, top_h)], fill=(8, 8, 8))
+    draw.text((18, top_h // 2), "1DAY GLOBAL  ·  DIGEST",
+              font=_font(18, False), fill=(220, 215, 205), anchor="lm")
+    today_s = date.today().strftime("%d %b %Y").upper()
+    dot_x   = VW - 16 - len(today_s) * 10 - 22
+    draw.ellipse([(dot_x, top_h // 2 - 5), (dot_x + 10, top_h // 2 + 5)],
+                 fill=C_RED)
+    draw.text((VW - 16, top_h // 2), today_s,
+              font=_font(16, False), fill=(180, 175, 165), anchor="rm")
 
-    # Yuqori gorizontal chiziq
-    draw.rectangle([(0, 0), (VW, 5)], fill=C_GOLD)
-    draw.rectangle([(0, VH - 5), (VW, VH)], fill=C_GOLD)
+    # ── CHAP/O'NG PANEL AJRATISH ──────────────────────────────
+    lw = int(VW * 0.38)   # chap panel kengligi (~486px)
+    draw.rectangle([(lw, top_h), (VW, VH)], fill=(14, 14, 14))
+    draw.rectangle([(lw, top_h), (lw + 1, VH)], fill=(40, 40, 40))
 
-    # Kanal nomi
-    brand = {
-        "uz": "1КУН GLOBAL",
-        "ru": "1ДЕНЬ GLOBAL",
-        "en": "1DAY GLOBAL",
-    }.get(lang, "1KUN GLOBAL")
-    _text_shadow(draw, (VW // 2, 200), brand,
-                 font=_font(86), fill=C_GOLD, offset=3, anchor="mm")
+    # ── CHAP PANEL ────────────────────────────────────────────
+    count_lbl = {
+        "uz": f"TOP {story_count} YANGILIK",
+        "ru": f"ТОП {story_count} НОВОСТЕЙ",
+        "en": f"TOP {story_count} STORIES",
+    }.get(lang, f"TOP {story_count} STORIES")
+    draw.text((24, top_h + 26), count_lbl,
+              font=_font(16), fill=C_RED, anchor="lm")
 
-    # Subtitle
-    subtitle = {
-        "uz": "ДУНЁ ЯНГИЛИКЛАРИ",
-        "ru": "МИРОВЫЕ НОВОСТИ",
-        "en": "WORLD NEWS DIGEST",
-    }.get(lang, "WORLD NEWS")
-    draw.text((VW // 2, 300), subtitle,
-              font=_font(36, bold=False), fill=C_LGRAY, anchor="mm")
+    hl_map = {
+        "uz": ["THE WORLD", "TODAY"],
+        "ru": ["МИР", "СЕГОДНЯ"],
+        "en": ["THE WORLD", "TODAY"],
+    }
+    ty = top_h + 62
+    for line in hl_map.get(lang, ["THE WORLD", "TODAY"]):
+        draw.text((22, ty), line, font=_font(80), fill=(10, 10, 10))
+        ty += 88
 
-    # Sana + yangilik soni
-    today = date.today().strftime("%d.%m.%Y")
-    count_label = {
-        "uz": f"{story_count} TA YANGILIK",
-        "ru": f"{story_count} НОВОСТИ",
-        "en": f"{story_count} STORIES",
-    }.get(lang, f"{story_count} STORIES")
-    draw.rectangle([(VW // 2 - 160, 370), (VW // 2 + 160, 420)],
-                   fill=C_RED)
-    draw.text((VW // 2, 395), f"  {today}  |  {count_label}  ",
-              font=_font(22), fill=C_WHITE, anchor="mm")
+    dur   = story_count * 2
+    tils  = {"uz": "UZ / RU / EN", "ru": "RU / UZ / EN", "en": "EN / UZ / RU"}.get(lang, "UZ/RU/EN")
+    draw.text((26, ty + 14), f"{dur} MIN  ·  {tils}",
+              font=_font(17, False), fill=(130, 125, 115), anchor="lm")
 
-    # Pastki brend chiziq
-    draw.text((VW // 2, VH - 35), "youtube.com/@1kunGlobal",
-              font=_font(18, bold=False), fill=(*C_GOLD, 150), anchor="mm")
+    # ── O'NG PANEL: Story ro'yxati ────────────────────────────
+    stories = stories or []
+    n       = min(story_count, 5)
+    item_h  = (VH - top_h) // n if n else 60
+    rx      = lw + 22
+
+    for i in range(1, n + 1):
+        sarlavha = ""
+        if i - 1 < len(stories):
+            sarlavha = (stories[i - 1].get("sarlavha") or "").strip()
+
+        item_cy = top_h + (i - 1) * item_h + item_h // 2
+
+        if i > 1:
+            div_y = top_h + (i - 1) * item_h
+            draw.rectangle([(rx - 6, div_y), (VW - 14, div_y + 1)],
+                           fill=(35, 35, 35))
+
+        draw.text((rx, item_cy), f"{i:02d}",
+                  font=_font(16), fill=C_RED, anchor="lm")
+
+        title_txt = sarlavha[:52] + ("…" if len(sarlavha) > 52 else "") if sarlavha else f"STORY {i}"
+        title_col = (220, 215, 205) if sarlavha else (60, 60, 60)
+        draw.text((rx + 48, item_cy), title_txt,
+                  font=_font(22), fill=title_col, anchor="lm")
+
+    # ── PASTKI FOOTER ─────────────────────────────────────────
+    draw.text((22, VH - 22), "youtube.com/@1dayglobal",
+              font=_font(13, False), fill=(110, 105, 95), anchor="lm")
+    draw.text((VW - 14, VH - 22), "1DAYGLOBAL.NEWS",
+              font=_font(13, False), fill=C_RED, anchor="rm")
 
     img.save(out_path, "JPEG", quality=93)
     return out_path
@@ -586,78 +622,75 @@ def _make_open_card(lang: str, story_count: int, out_path: str):
 def _make_story_title_card(
         sarlavha: str, location: str, daraja: str,
         story_num: int, total: int, lang: str, out_path: str):
+    """
+    Rasm topilmaganda fallback karta — TOZA dizayn.
+    Raqam, sana, progress bar YO'Q — faqat brend + sarlavha + joylashuv.
+    """
     img  = Image.new("RGB", (VW, VH), C_BG)
-    _gradient_rect(ImageDraw.Draw(img), 0, 0, VW, VH, (6, 12, 30), (2, 5, 18))
-    img  = _draw_map_bg(img, alpha=25)
     draw = ImageDraw.Draw(img)
 
-    # Chap aksent bar
-    accent = {"muhim": C_RED, "tezkor": (230, 130, 0), "xabar": C_ACCENT}.get(daraja, C_ACCENT)
-    draw.rectangle([(0, 0), (8, VH)], fill=accent)
+    # Subtle grid (brand element)
+    for gx in range(0, VW, 80):
+        draw.line([(gx, 0), (gx, VH)], fill=(20, 20, 20), width=1)
+    for gy in range(0, VH, 80):
+        draw.line([(0, gy), (VW, gy)], fill=(20, 20, 20), width=1)
 
-    # Yuqori bar
-    draw.rectangle([(0, 0), (VW, 55)], fill=(*C_BG, 230))
-    draw.rectangle([(0, 52), (VW, 55)], fill=accent)
+    # Chap qizil aksent bar
+    draw.rectangle([(0, 0), (7, VH)], fill=C_RED)
 
-    # Kanal nomi yuqorida
-    brand = {"uz": "1КУН GLOBAL", "ru": "1ДЕНЬ GLOBAL", "en": "1DAY GLOBAL"}.get(lang, "1KUN")
-    draw.text((20, 27), brand, font=_font(24), fill=C_GOLD, anchor="lm")
-    draw.text((VW - 20, 27), date.today().strftime("%d.%m.%Y"),
-              font=_font(22, bold=False), fill=C_LGRAY, anchor="rm")
+    # ── YUQORI BAR ────────────────────────────────────────────
+    top_h = 52
+    draw.rectangle([(0, 0), (VW, top_h)], fill=(8, 8, 8))
+    draw.rectangle([(0, top_h - 3), (VW, top_h)], fill=C_RED)
 
-    # Yangilik raqami badge (chapda, markazda)
-    badge_cx, badge_cy = 80, VH // 2
-    for r, a in [(58, 30), (48, 60)]:
-        draw.ellipse([(badge_cx - r, badge_cy - r),
-                      (badge_cx + r, badge_cy + r)],
-                     outline=(*accent, a), width=2)
-    draw.ellipse([(badge_cx - 40, badge_cy - 40),
-                  (badge_cx + 40, badge_cy + 40)], fill=accent)
-    draw.text((badge_cx, badge_cy - 8), str(story_num),
-              font=_font(36), fill=C_WHITE, anchor="mm")
-    draw.text((badge_cx, badge_cy + 20), f"/{total}",
-              font=_font(18, bold=False), fill=(*C_WHITE, 180), anchor="mm")
+    # LIVE badge
+    draw.rectangle([(10, 8), (70, top_h - 8)], fill=C_RED)
+    draw.text((40, top_h // 2), "LIVE", font=_font(17), fill=C_WHITE, anchor="mm")
 
-    # Daraja banner
-    banner = {
-        "muhim":  "⚡ MUHIM YANGILIK",
-        "tezkor": "🔴 TEZKOR",
-        "xabar":  "📰 XABAR",
-    }.get(daraja, "📰 YANGILIK")
-    if lang == "ru":
-        banner = {
-            "muhim":  "⚡ ГЛАВНАЯ НОВОСТЬ",
-            "tezkor": "🔴 СРОЧНО",
-            "xabar":  "📰 НОВОСТЬ",
-        }.get(daraja, "📰 НОВОСТЬ")
-    elif lang == "en":
-        banner = {
-            "muhim":  "⚡ BREAKING",
-            "tezkor": "🔴 URGENT",
-            "xabar":  "📰 NEWS",
-        }.get(daraja, "📰 NEWS")
+    # Brand nomi — FAQAT, sana/raqam YO'Q
+    draw.text((82, top_h // 2), "1DAY GLOBAL  ·  WORLD NEWS",
+              font=_font(18), fill=C_WHITE, anchor="lm")
 
-    bx = 140
-    draw.rectangle([(bx, 75), (bx + len(banner) * 14 + 20, 110)],
-                   fill=(*accent, 240))
-    draw.text((bx + 10, 92), banner, font=_font(22), fill=C_WHITE, anchor="lm")
+    # ── DARAJA BADGE ─────────────────────────────────────────
+    badge_labels = {
+        "uz": {"muhim": "MUHIM YANGILIK", "tezkor": "TEZKOR", "xabar": "YANGILIK"},
+        "ru": {"muhim": "ГЛАВНАЯ",        "tezkor": "СРОЧНО", "xabar": "НОВОСТЬ"},
+        "en": {"muhim": "BREAKING",       "tezkor": "URGENT", "xabar": "NEWS"},
+    }
+    badge_txt = badge_labels.get(lang, badge_labels["en"]).get(daraja, "NEWS")
+    bw = len(badge_txt) * 13 + 28
+    bx, by = 20, top_h + 30
+    draw.rectangle([(bx, by), (bx + bw, by + 34)], fill=C_RED)
+    draw.text((bx + bw // 2, by + 17), badge_txt,
+              font=_font(20), fill=C_WHITE, anchor="mm")
 
-    # Sarlavha (katta, yorqin)
+    # ── SARLAVHA (markazda, katta) ───────────────────────────
     title_text = sarlavha or ""
-    wrapped    = textwrap.wrap(title_text, width=32)[:4]
-    ty         = 150 if len(wrapped) <= 2 else 130
+    wrapped    = textwrap.wrap(title_text, width=32)[:5]
+    ty = VH // 2 - (len(wrapped) * 64) // 2
     for i, line in enumerate(wrapped):
-        fs   = 54 if i == 0 else 48
+        fs   = 58 if i == 0 else 48
         fill = C_WHITE if i == 0 else C_LGRAY
-        _text_shadow(draw, (140, ty), line, font=_font(fs), fill=fill, offset=3)
-        ty += fs + 10
+        _text_shadow(draw, (20, ty), line, font=_font(fs), fill=fill, offset=3)
+        ty += fs + 14
 
-    # Geo-marker (o'ng pastda — qorong'i fon, sarlavhaga to'sqinlik yo'q)
+    # ── LOCATION (pastda, agar bor bo'lsa) ───────────────────
     if location:
-        _draw_geo_marker(draw, VW - 170, VH - 95, location, lang)
+        loc_txt = f"📍 {location.upper()[:35]}"
+        loc_y   = VH - 90
+        draw.rectangle([(20, loc_y), (20 + len(loc_txt) * 11 + 16, loc_y + 30)],
+                        fill=(18, 18, 18))
+        draw.rectangle([(20, loc_y), (23, loc_y + 30)], fill=C_RED)
+        draw.text((36, loc_y + 15), loc_txt, font=_font(16, False),
+                  fill=C_LGRAY, anchor="lm")
 
-    # Pastki chiziq
-    draw.rectangle([(0, VH - 5), (VW, VH)], fill=accent)
+    # ── PASTKI BAR ────────────────────────────────────────────
+    bot_h = 32
+    bot_y = VH - bot_h
+    draw.rectangle([(0, bot_y), (VW, VH)], fill=(8, 8, 8))
+    draw.rectangle([(0, bot_y), (VW, bot_y + 2)], fill=C_RED)
+    draw.text((14, bot_y + bot_h // 2), "1D  1DAY GLOBAL",
+              font=_font(14), fill=C_WHITE, anchor="lm")
 
     img.save(out_path, "JPEG", quality=93)
     return out_path
@@ -693,156 +726,139 @@ def _make_photo_overlay_png(
         next_title: str, story_num: int, total: int,
         out_path: str) -> str:
     """
-    Shaffof PNG overlay (RGBA) — qayta dizayn:
-      · Chap panel: sana (katta, yorqin) + geo mini-karta (shaffof)
-      · Sarlavha to'liq kenglikda (karta to'sqinlik qilmaydi)
-      · Progress bar (hikoyalar progressi)
-      · Chap aksent glow effekti
-      · O'ng tomon — stats (yuqorida, fotodan ajratilgan)
+    1DAY GLOBAL broadcast-style overlay (RGBA) — TV yangiliklar formati:
+      · Yuqori bar: LIVE + brend + vaqt/sana + epizod
+      · Pastki lower-third: BREAKING badge + sarlavha
+      · Ticker: NEXT → keyingi yangilik
+      · Pastki bar: logotip + handles
+      · Geo karta: o'ng pastda (faqat digest uchun, shorts uchun yo'q)
     """
-    accent = {"muhim": C_RED, "tezkor": (230, 130, 0), "xabar": C_ACCENT}.get(daraja, C_ACCENT)
-
     img  = Image.new("RGBA", (VW, VH), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # ── 1. CHAP AKSENT BAR + GLOW ─────────────────────────────
-    # Asosiy aksent chizig'i
-    draw.rectangle([(0, 0), (5, VH)], fill=(*accent, 225))
-    # Yumshoq glow (kengroq, pastroq alpha)
-    for gw_off, ga in [(14, 55), (24, 28), (36, 12)]:
-        draw.rectangle([(5, 0), (5 + gw_off, VH)], fill=(*accent, ga))
+    now_t    = datetime.now()
+    date_str = now_t.strftime("%d %b %Y").upper()
+    time_str = now_t.strftime("%H:%M  GMT+5")
+    ep_str   = f"EP. {story_num}/{total}"
+    lang_tag = lang.upper()
 
-    # ── 2. YUQORI BAR ─────────────────────────────────────────
-    draw.rectangle([(0, 0), (VW, 44)], fill=(4, 8, 20, 215))
-    draw.rectangle([(0, 42), (VW, 45)], fill=(*accent, 235))
-    brand = {"uz": "1КУН GLOBAL", "ru": "1ДЕНЬ GLOBAL", "en": "1DAY GLOBAL"}.get(lang, "1KUN")
-    draw.text((18, 22), brand, font=_font(22), fill=C_GOLD, anchor="lm")
-    # (sana yuqori o'ngdan OLIB TASHLANDI — geo panelga ko'chdi)
+    # ── 1. YUQORI BAR (broadcast style) ──────────────────────
+    bar_h = 46
+    draw.rectangle([(0, 0), (VW, bar_h)], fill=(0, 0, 0, 240))
+    draw.rectangle([(0, bar_h - 3), (VW, bar_h)], fill=(*C_RED, 255))
 
-    # ── 3. PROGRESS BAR (hikoyalar progressi) ─────────────────
+    # LIVE badge
+    draw.rectangle([(8, 8), (72, bar_h - 8)], fill=(*C_RED, 255))
+    draw.text((40, bar_h // 2), "LIVE", font=_font(18), fill=C_WHITE, anchor="mm")
+
+    # Brend nomi
+    draw.text((84, bar_h // 2), "1DAY GLOBAL  ·  WORLD NEWS",
+              font=_font(18), fill=C_WHITE, anchor="lm")
+
+    # O'ng tomon: sana + vaqt + epizod
+    draw.text((VW - 8, bar_h // 2),
+              f"{date_str}  ·  {time_str}  ·  {ep_str}  ·  {lang_tag}",
+              font=_font(15, False), fill=C_LGRAY, anchor="rm")
+
+    # ── 2. PROGRESS BAR ──────────────────────────────────────
     if total > 1:
         prog_w = int(VW * story_num / total)
-        draw.rectangle([(0, 45), (prog_w, 49)], fill=(*accent, 200))
-        draw.rectangle([(prog_w, 45), (VW, 49)], fill=(30, 45, 80, 100))
-    else:
-        draw.rectangle([(0, 45), (VW, 49)], fill=(*accent, 180))
+        draw.rectangle([(0, bar_h), (prog_w, bar_h + 3)], fill=(*C_RED, 220))
+        draw.rectangle([(prog_w, bar_h), (VW, bar_h + 3)], fill=(40, 40, 40, 150))
 
-    # ── 4. CHAP PANEL: SANA + GEO MINI-KARTA ─────────────────
-    panel_x  = 14         # chap chegaradan 14px
-    panel_top = 58        # yuqori bardan pastga
-
-    # 4a. SANA — katta, yorqin
-    date_str  = date.today().strftime("%d.%m.%Y")
-    date_font = _font(36)
-    # Soya
-    draw.text((panel_x + 2, panel_top + 2), date_str,
-              font=date_font, fill=(0, 0, 0, 120))
-    # Asosiy matn (yorqin oltin)
-    draw.text((panel_x, panel_top), date_str,
-              font=date_font, fill=(255, 220, 40, 255))
-
-    # 4b. GEO MINI-KARTA (kvadrat, shaffof) — sana ostida
-    geo_top = panel_top + 50   # sana ostidan
-    geo_w, geo_h = 215, 158    # kompakt o'lcham
-
+    # ── 3. GEO MINI-KARTA (o'ng tomonida, pastki qismda) ────
     if location:
+        geo_w, geo_h = 220, 135
+        geo_x = VW - geo_w - 10
+        geo_y = bar_h + 8
         try:
-            from geo_map import draw_geo_card
+            from geo_map import draw_geo_card, _lookup_city as _lc
             import uuid
             tmp_geo = os.path.join(TEMP_DIR, f"dg_geo_{uuid.uuid4().hex[:8]}.png")
-            draw_geo_card(location, tmp_geo, card_w=geo_w, card_h=geo_h)
+            _zoom = 5 if _lc(location) else 4
+            draw_geo_card(location, tmp_geo, card_w=geo_w, card_h=geo_h, zoom=_zoom)
             geo_img = Image.open(tmp_geo).convert("RGBA")
-            # 72% shaffoflik (transparent ko'rinish)
             r, g, b, a_ch = geo_img.split()
-            a_ch = a_ch.point(lambda p: int(p * 0.72))
+            a_ch = a_ch.point(lambda p: int(p * 0.80))
             geo_img.putalpha(a_ch)
-            img.alpha_composite(geo_img, (panel_x, geo_top))
-            try:
-                os.remove(tmp_geo)
-            except Exception:
-                pass
+            img.alpha_composite(geo_img, (geo_x, geo_y))
+            try: os.remove(tmp_geo)
+            except: pass
         except Exception:
-            # Fallback: minimal karta bloki
-            draw.rectangle([(panel_x, geo_top),
-                             (panel_x + geo_w, geo_top + geo_h)],
-                            fill=(4, 10, 28, 185), outline=(*accent, 140), width=1)
-            cx = panel_x + geo_w // 2
-            cy = geo_top + (geo_h - 22) // 2
-            draw.ellipse([(cx - 7, cy - 7), (cx + 7, cy + 7)], fill=(*C_RED, 230))
-            draw.ellipse([(cx - 3, cy - 3), (cx + 3, cy + 3)], fill=(255, 255, 255, 240))
-            loc_short = (location[:16]).upper()
-            draw.text((cx, cy + 18), loc_short,
-                      font=_font(14), fill=(*C_GOLD, 220), anchor="mm")
+            # Fallback: qizil nuqta + joy nomi
+            draw.rectangle([(geo_x, geo_y), (geo_x + geo_w, geo_y + geo_h)],
+                            fill=(10, 10, 10, 180), outline=(*C_RED, 120), width=1)
+            cx = geo_x + geo_w // 2
+            cy = geo_y + (geo_h - 20) // 2
+            draw.ellipse([(cx - 6, cy - 6), (cx + 6, cy + 6)], fill=(*C_RED, 240))
+            draw.ellipse([(cx - 3, cy - 3), (cx + 3, cy + 3)], fill=(255, 255, 255, 255))
+            draw.text((cx, cy + 18), location.upper()[:18],
+                      font=_font(13), fill=C_WHITE, anchor="mm")
 
-    # ── 5. STATS — O'NG YUQORI (fotodan uzilgan zona) ─────────
-    # Emoji → ASCII belgi (PIL Windows fontlarida emoji ko'rsatmaydi)
-    _ICON_MAP = {"📊": "[%]", "💰": "[$]", "🔴": "[!]", "📅": "[D]", "📈": "[N]"}
-    if stats:
-        sx = VW - 18
-        sy = 60
-        for stat in stats[:2]:
-            val  = stat.get("val", "")
-            unit = stat.get("unit", "")
-            icon = _ICON_MAP.get(stat.get("icon", ""), "")
-            if not val:
-                continue
-            label   = f"{icon} {val}".strip()
-            box_w   = max(120, len(label) * 13 + 22)
-            draw.rectangle([(sx - box_w, sy), (sx, sy + 52)],
-                            fill=(*C_NAVY, 215))
-            draw.rectangle([(sx - box_w, sy), (sx, sy + 3)],
-                            fill=(*C_GOLD, 235))
-            draw.text((sx - box_w // 2, sy + 26),
-                       label,
-                       font=_font(26), fill=(255, 255, 255, 248), anchor="mm")
-            if unit:
-                draw.text((sx - box_w // 2, sy + 44),
-                           unit.upper()[:12],
-                           font=_font(12, bold=False), fill=(*C_LGRAY, 205), anchor="mm")
-            sy += 62
-
-    # ── 6. PASTKI GRADIENT (lower third) ──────────────────────
-    grad_h   = 245
+    # ── 4. PASTKI QORA GRADIENT (lower-third foni) ───────────
+    grad_h   = 230
     grad_img = Image.new("RGBA", (VW, grad_h), (0, 0, 0, 0))
     g_draw   = ImageDraw.Draw(grad_img)
     for dy in range(grad_h):
-        alpha = int(242 * (dy / grad_h) ** 1.25)
-        g_draw.line([(0, dy), (VW, dy)], fill=(4, 8, 20, alpha))
+        alpha = int(252 * (dy / grad_h) ** 1.1)
+        g_draw.line([(0, dy), (VW, dy)], fill=(0, 0, 0, alpha))
     img.paste(grad_img, (0, VH - grad_h), grad_img)
 
-    # ── 7. HIKOYA RAQAMI (doira badge) ────────────────────────
-    bx, by = 40, VH - 185
-    draw.ellipse([(bx - 30, by - 30), (bx + 30, by + 30)], fill=(*accent, 235))
-    draw.text((bx, by), str(story_num), font=_font(30), fill=C_WHITE, anchor="mm")
+    # ── 5. BREAKING BADGE + SARLAVHA ─────────────────────────
+    brk_labels = {
+        "uz": {"muhim": "BREAKING", "tezkor": "TEZKOR", "xabar": "YANGILIK"},
+        "ru": {"muhim": "СРОЧНО",   "tezkor": "СРОЧНО", "xabar": "НОВОСТЬ"},
+        "en": {"muhim": "BREAKING", "tezkor": "URGENT", "xabar": "NEWS"},
+    }
+    brk_text = brk_labels.get(lang, brk_labels["en"]).get(daraja, "NEWS")
+    brk_w    = len(brk_text) * 14 + 24
+    brk_y    = VH - 148
+    draw.rectangle([(0, brk_y), (brk_w, brk_y + 38)], fill=(*C_RED, 255))
+    draw.text((brk_w // 2, brk_y + 19), brk_text,
+              font=_font(22), fill=C_WHITE, anchor="mm")
 
-    # ── 8. SARLAVHA — TO'LIQ KENGLIKDA ───────────────────────
+    # Sarlavha
     if sarlavha:
-        wrapped = textwrap.wrap(sarlavha, width=50)[:2]
-        ty = VH - 178
+        wrapped = textwrap.wrap(sarlavha, width=52)[:2]
+        ty = VH - 143
         for i, line in enumerate(wrapped):
-            fs   = 40 if i == 0 else 36
-            col  = (255, 255, 255, 250) if i == 0 else (220, 230, 245, 235)
-            # Qalin soya (o'qilishi uchun)
-            draw.text((78, ty + 3), line, font=_font(fs), fill=(0, 0, 0, 165))
-            draw.text((76, ty),     line, font=_font(fs), fill=col)
-            ty += fs + 8
+            fs  = 38 if i == 0 else 33
+            col = (255, 255, 255, 255) if i == 0 else (200, 200, 200, 240)
+            draw.text((brk_w + 10, ty + 2), line, font=_font(fs), fill=(0, 0, 0, 150))
+            draw.text((brk_w + 8, ty),      line, font=_font(fs), fill=col)
+            ty += fs + 6
 
-    # ── 9. PASTKI TICKER ──────────────────────────────────────
-    ticker_h = 38
-    y0       = VH - ticker_h
-    draw.rectangle([(0, y0), (VW, VH)], fill=(*C_TICKER, 238))
-    badge    = f" {story_num}/{total} "
-    bw2      = len(badge) * 11 + 8
-    draw.rectangle([(0, y0), (bw2, VH)], fill=(*C_RED, 248))
-    draw.text((bw2 // 2, y0 + ticker_h // 2), badge,
-              font=_font(19), fill=(255, 255, 255, 255), anchor="mm")
-    next_label = {"uz": "KEYINGI:", "ru": "ДАЛЕЕ:", "en": "NEXT:"}.get(lang, "NEXT:")
-    draw.text((bw2 + 10, y0 + ticker_h // 2), next_label,
-              font=_font(18), fill=(*C_GOLD, 248), anchor="lm")
-    if next_title:
-        short = next_title[:62] + ("…" if len(next_title) > 62 else "")
-        draw.text((bw2 + 100, y0 + ticker_h // 2), short,
-                  font=_font(18, bold=False), fill=(255, 255, 255, 238), anchor="lm")
+    # ── 6. TICKER BAR — faqat sana va kanal nomi (keyingi sarlavha YO'Q) ──
+    tick_h = 36
+    tick_y = VH - tick_h - 32
+    draw.rectangle([(0, tick_y), (VW, tick_y + tick_h)], fill=(10, 10, 10, 245))
+    draw.rectangle([(0, tick_y), (0 + 3, tick_y + tick_h)], fill=(*C_RED, 255))
+
+    # "WORLD" dot badge
+    draw.rectangle([(6, tick_y + 4), (80, tick_y + tick_h - 4)], fill=(*C_RED, 220))
+    draw.text((43, tick_y + tick_h // 2), "WORLD", font=_font(14), fill=C_WHITE, anchor="mm")
+
+    # Sana + kanal (keyingi sarlavha yo'q — foydalanuvchi so'rovi)
+    from datetime import date as _date
+    ticker_txt = f"1DAY GLOBAL  ·  THE WORLD IN ONE DAY  ·  {_date.today().strftime('%d.%m.%Y')}"
+    draw.text((90, tick_y + tick_h // 2), ticker_txt,
+              font=_font(16, False), fill=C_WHITE, anchor="lm")
+
+    # ── 7. PASTKI BAR (logotip + handles) ────────────────────
+    bot_h = 30
+    bot_y = VH - bot_h
+    draw.rectangle([(0, bot_y), (VW, VH)], fill=(0, 0, 0, 255))
+    draw.rectangle([(0, bot_y), (VW, bot_y + 2)], fill=(*C_RED, 200))
+
+    handles = {
+        "uz": "YOUTUBE.COM/@1DAYGLOBAL  ·  TELEGRAM  @BIRKUNDAY",
+        "ru": "YOUTUBE.COM/@1DAYGLOBAL  ·  TELEGRAM  @BIRKUNDAY_RU",
+        "en": "YOUTUBE.COM/@1DAYGLOBAL  ·  TELEGRAM  @BIRKUNDAY_EN",
+    }.get(lang, "YOUTUBE.COM/@1DAYGLOBAL")
+    draw.text((10, bot_y + bot_h // 2), "1D  1DAY GLOBAL",
+              font=_font(14), fill=C_WHITE, anchor="lm")
+    draw.text((VW - 8, bot_y + bot_h // 2), handles,
+              font=_font(12, False), fill=C_LGRAY, anchor="rm")
 
     img.save(out_path, "PNG")
     return out_path
@@ -852,32 +868,47 @@ def _make_photo_overlay_png(
 # KARTA 4: Outro kartasi
 # ─────────────────────────────────────────────────────────────
 def _make_outro_card(lang: str, out_path: str):
+    """
+    1DAY GLOBAL brand style outro card (endi ishlatilmaydi — lekin arxiv uchun saqlanadi).
+    Foydalanuvchi so'rovi: barcha video turlaridan intro/outro olib tashlangan.
+    """
     img  = Image.new("RGB", (VW, VH), C_BG)
-    _gradient_rect(ImageDraw.Draw(img), 0, 0, VW, VH, C_BG, (2, 5, 18))
-    img  = _draw_map_bg(img, alpha=30)
     draw = ImageDraw.Draw(img)
 
-    draw.rectangle([(0, 0), (6, VH)], fill=C_RED)
-    draw.rectangle([(VW - 6, 0), (VW, VH)], fill=C_RED)
-    draw.rectangle([(0, 0), (VW, 5)], fill=C_GOLD)
-    draw.rectangle([(0, VH - 5), (VW, VH)], fill=C_GOLD)
+    # Subtle grid
+    for gx in range(0, VW, 80):
+        draw.line([(gx, 0), (gx, VH)], fill=(20, 20, 20), width=1)
+    for gy in range(0, VH, 80):
+        draw.line([(0, gy), (VW, gy)], fill=(20, 20, 20), width=1)
 
-    brand = {"uz": "1КУН GLOBAL", "ru": "1ДЕНЬ GLOBAL", "en": "1DAY GLOBAL"}.get(lang, "1KUN")
-    _text_shadow(draw, (VW // 2, VH // 2 - 80), brand,
-                 font=_font(78), fill=C_GOLD, offset=3, anchor="mm")
+    # Aksent barlar
+    draw.rectangle([(0, 0), (7, VH)], fill=C_RED)
+    draw.rectangle([(VW - 7, 0), (VW, VH)], fill=C_RED)
+    draw.rectangle([(0, 0), (VW, 5)], fill=C_RED)
+    draw.rectangle([(0, VH - 5), (VW, VH)], fill=C_RED)
+
+    # Brand nomi
+    _text_shadow(draw, (VW // 2, VH // 2 - 80), "1DAY GLOBAL",
+                 font=_font(82), fill=C_WHITE, offset=3, anchor="mm")
+
+    # Tagline
+    draw.text((VW // 2, VH // 2 - 20), "THE WORLD · IN ONE DAY",
+              font=_font(26, False), fill=C_RED, anchor="mm")
 
     cta = {
-        "uz": ("ОБУНА БЎЛИНГ!", "Ҳар куни дунё янгиликлари — каналимизда"),
+        "uz": ("OBUNA BO'LING!", "Har kuni dunyo yangiliklari — kanalimizda"),
         "ru": ("ПОДПИСЫВАЙТЕСЬ!", "Главные новости мира — каждый день"),
         "en": ("SUBSCRIBE NOW!", "World news delivered daily"),
     }.get(lang, ("SUBSCRIBE!", "World news every day"))
-    draw.text((VW // 2, VH // 2 + 10), cta[0], font=_font(42), fill=C_WHITE, anchor="mm")
-    draw.text((VW // 2, VH // 2 + 60), cta[1], font=_font(22, bold=False),
-              fill=C_LGRAY, anchor="mm")
 
-    # Bell icon area
-    draw.text((VW // 2, VH // 2 + 110), "🔔  👍  SHARE",
-              font=_font(28, bold=False), fill=(*C_GOLD, 200), anchor="mm")
+    draw.rectangle([(VW // 2 - 200, VH // 2 + 20), (VW // 2 + 200, VH // 2 + 66)],
+                   fill=C_RED)
+    draw.text((VW // 2, VH // 2 + 43), cta[0], font=_font(36), fill=C_WHITE, anchor="mm")
+    draw.text((VW // 2, VH // 2 + 85), cta[1],
+              font=_font(20, bold=False), fill=C_LGRAY, anchor="mm")
+
+    draw.text((VW // 2, VH - 50), "youtube.com/@1dayglobal  ·  t.me/birkunday",
+              font=_font(16, bold=False), fill=C_LGRAY, anchor="mm")
 
     img.save(out_path, "JPEG", quality=93)
     return out_path
@@ -1105,53 +1136,415 @@ def _fix_uz_from_ru(ru_text: str, en_title: str) -> str:
 
 
 def _generate_script(en_title: str, jumla_text: str, lang: str) -> str:
-    """Script bo'sh yoki qisqa bo'lsa — Anthropic Sonnet 4.6 bilan yangi script yaratish.
-    Natija: 200-300 so'z, TTS uchun tayyor."""
-    try:
-        import sys as _sys
-        _sys.path.insert(0, os.path.join(_HERE, "..", "TELEGRAM"))
-        from translator import _ask_anthropic  # Anthropic Sonnet 4.6
+    """Script bo'sh yoki qisqa bo'lsa — AI bilan yangi script yaratish.
+    Zanjir: Anthropic → Groq → OpenRouter
+    Natija: 200-250 so'z, TTS uchun tayyor."""
+    import sys as _sys
+    _sys.path.insert(0, os.path.join(_HERE, "..", "TELEGRAM"))
 
-        lang_map = {
-            "uz": ("Uzbek LATIN script (lotin harflarda, TTS uchun). SOF O'ZBEK tili. "
-                   "Ruscha so'z ishlatma. Trump=Tramp, Biden=Bayden. 200-250 so'z."),
-            "ru": "Russian Cyrillic. 200-250 слов. Подробный репортаж.",
-            "en": "English. 200-250 words. Detailed news report.",
-        }
-        lang_instr = lang_map.get(lang, lang_map["en"])
+    lang_map = {
+        "uz": ("Uzbek LATIN script ONLY (lotin harflarda, TTS uchun). SOF O'ZBEK tili. "
+               "Ruscha yoki inglizcha so'z ishlatma. "
+               "Trump=Tramp, Biden=Bayden, Netanyahu=Netanyaxu, Gaza=G'azo, "
+               "Iran=Eron, Russia=Rossiya, Ukraine=Ukraina, Israel=Isroil. "
+               "200-250 so'z."),
+        "ru": "Russian Cyrillic ONLY. 200-250 слов. Подробный репортаж. Все имена и страны на русском.",
+        "en": "English. 200-250 words. Detailed news report.",
+    }
+    lang_instr = lang_map.get(lang, lang_map["en"])
+    prompt = (
+        f"Write a detailed news narration script in {lang_instr}\n"
+        f"News headline: {en_title}\n"
+        f"Context: {(jumla_text or '')[:500] or 'No additional context.'}\n\n"
+        "Cover: what happened, where, who is involved, why it matters, consequences.\n"
+        "NO intro phrases like 'Welcome', 'This is', 'Efirda', 'V efire'.\n"
+        "Return ONLY the narration text."
+    )
 
-        prompt = (
-            f"Write a detailed news narration script in {lang_instr}\n"
-            f"News headline: {en_title}\n"
-            f"News context: {jumla_text or 'No additional context available.'}\n\n"
-            "Write a complete narration: explain what happened, where, who is involved, "
-            "why it matters, what are the consequences. Add historical context.\n"
-            "NO intro phrases like 'Welcome to...' or 'This is...'.\n"
-            "Return ONLY the narration text, nothing else."
-        )
-        result = _ask_anthropic(prompt, max_tokens=1500, model="claude-sonnet-4-6")
-        result = result.strip()
-        # Intro/outro iboralarini tozalash
-        result = re.sub(
+    def _clean(text: str) -> str:
+        text = re.sub(
             r"^(Efirda\s+1KUN|В\s+эфире\s+1ДЕНЬ|This\s+is\s+1DAY)[^.]*\.\s*",
-            "", result, flags=re.IGNORECASE
+            "", text.strip(), flags=re.IGNORECASE
         ).strip()
-        words = result.split()
-        if len(words) >= 50:
-            log.info(f"  ✅ Script generatsiya [{lang.upper()}]: {len(words)} so'z")
+        return text
+
+    # ── 1. Anthropic (eng yuqori sifat) ──────────────────────
+    try:
+        from translator import _ask_anthropic
+        result = _clean(_ask_anthropic(prompt, max_tokens=1500, model="claude-sonnet-4-6"))
+        if len(result.split()) >= 50:
+            log.info(f"  Script Anthropic [{lang.upper()}]: {len(result.split())} so'z")
             return result
-        log.warning(f"  ⚠️  Script generatsiya qisqa ({len(words)} so'z)")
-        return result
     except Exception as e:
-        log.warning(f"  Script generatsiya xato ({lang}): {e}")
-        return ""
+        log.warning(f"  Script Anthropic xato ({lang}): {str(e)[:80]}")
+
+    # ── 2. Groq (tez va bepul) ────────────────────────────────
+    try:
+        groq_key = os.getenv("GROQ_API_KEY", "")
+        if groq_key:
+            groq_models = [
+                "llama-3.3-70b-versatile",
+                "llama-3.1-70b-versatile",
+                "gemma2-9b-it",
+                "llama-3.1-8b-instant",
+            ]
+            for gm in groq_models:
+                try:
+                    r = requests.post(
+                        "https://api.groq.com/openai/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {groq_key}",
+                                 "Content-Type": "application/json"},
+                        json={"model": gm,
+                              "messages": [{"role": "user", "content": prompt}],
+                              "max_tokens": 1500, "temperature": 0.6},
+                        timeout=30
+                    )
+                    if r.ok:
+                        result = _clean(r.json()["choices"][0]["message"]["content"])
+                        if len(result.split()) >= 50:
+                            log.info(f"  Script Groq/{gm} [{lang.upper()}]: {len(result.split())} so'z")
+                            return result
+                    elif r.status_code == 429:
+                        import time; time.sleep(5)
+                    else:
+                        break   # 400/404 → keyingi model emas, keyingi servis
+                except Exception:
+                    continue
+    except Exception as e:
+        log.warning(f"  Script Groq xato ({lang}): {str(e)[:80]}")
+
+    # ── 3. OpenRouter (fallback) ──────────────────────────────
+    try:
+        or_key = os.getenv("OPENROUTER_API_KEY", "")
+        if or_key:
+            or_models = [
+                "meta-llama/llama-3.3-70b-instruct:free",
+                "google/gemma-3-27b-it:free",
+                "qwen/qwen3-8b:free",
+                "google/gemma-2-9b-it:free",
+            ]
+            for om in or_models:
+                try:
+                    r = requests.post(
+                        "https://openrouter.ai/api/v1/chat/completions",
+                        headers={"Authorization": f"Bearer {or_key}",
+                                 "Content-Type": "application/json",
+                                 "X-Title": "1Kun Global"},
+                        json={"model": om,
+                              "messages": [{"role": "user", "content": prompt}],
+                              "max_tokens": 1500},
+                        timeout=45
+                    )
+                    if r.ok:
+                        result = _clean(r.json()["choices"][0]["message"]["content"])
+                        if len(result.split()) >= 50:
+                            log.info(f"  Script OpenRouter/{om} [{lang.upper()}]: {len(result.split())} so'z")
+                            return result
+                    elif r.status_code in (404, 402):
+                        continue   # Model yo'q → keyingisi
+                    elif r.status_code == 429:
+                        import time; time.sleep(10); continue
+                except Exception:
+                    continue
+    except Exception as e:
+        log.warning(f"  Script OpenRouter xato ({lang}): {str(e)[:80]}")
+
+    log.warning(f"  Script barcha servislar muvaffaqiyatsiz ({lang})")
+    return ""
+
+
+_TTS_NAME_FIX_UZ = {
+    # Loqin atoqli ismlar → O'zbek TTS talaffuzi
+    "Mladic":       "Mladich",
+    "mladic":       "mladich",
+    "Hague":        "Gaaga",
+    "hague":        "gaaga",
+    "Srebrenica":   "Srebrenitsa",
+    "srebrenica":   "srebrenitsa",
+    "Zelensky":     "Zelenskiy",
+    "zelensky":     "zelenskiy",
+    "Zelenskyy":    "Zelenskiy",
+    "zelenskyy":    "zelenskiy",
+    "Netanyahu":    "Netanyaxu",
+    "netanyahu":    "Netanyaxu",
+    "Hamas":        "Xamas",
+    "hamas":        "xamas",
+    "Hezbollah":    "Hizbulloh",
+    "hezbollah":    "hizbulloh",
+    "Houthi":       "Xusiy",
+    "houthi":       "xusiy",
+    "Houthis":      "Xusiylar",
+    "houthis":      "xusiylar",
+    "Macron":       "Makron",
+    "macron":       "makron",
+    "Erdogan":      "Erdo'g'on",
+    "erdogan":      "erdo'g'on",
+    "Khamenei":     "Xomeneiy",
+    "khamenei":     "xomeneiy",
+    "Khomeini":     "Xumayni",
+    "khomeini":     "xumayni",
+    "Kissinger":    "Kissinjer",
+    "kissinger":    "kissinjer",
+    "Milosevic":    "Miloshevich",
+    "milosevic":    "miloshevich",
+    "Karadzic":     "Karajich",
+    "karadzic":     "karajich",
+    "Sejdiu":       "Seydiu",
+    "Vucic":        "Vuchich",
+    "vucic":        "vuchich",
+    "Djokovic":     "Jokovich",
+    "djokovic":     "jokovich",
+    "Macgregor":    "Makgregor",
+    "macgregor":    "makgregor",
+    "Guterres":     "Guterresh",
+    "guterres":     "guterresh",
+    "Merkel":       "Merkel",
+    "Schumer":      "Shumer",
+    "schumer":      "shumer",
+    "Scholz":       "Sholts",
+    "scholz":       "sholts",
+    "Ursula":       "Ursula",
+    "Lavrov":       "Lavrov",
+    "Peskov":       "Peskov",
+    "Shoigu":       "Shoygу",
+    "shoigu":       "shoygu",
+    "Patrushev":    "Patrushev",
+    "Medvedev":     "Medvedev",
+    "Lukashenko":   "Lukashenko",
+    "lukashenko":   "lukashenko",
+    "Orbán":        "Orban",
+    "orban":        "orban",
+    "Orban":        "Orban",
+    "Salvini":      "Salvini",
+    "Meloni":       "Meloni",
+    "Trudeau":      "Trudo",
+    "trudeau":      "trudo",
+    "Sunak":        "Sunak",
+    "Starmer":      "Starmer",
+    "Albanese":     "Albaneze",
+    "Milei":        "Miley",
+    "milei":        "miley",
+    "Bukele":       "Bukele",
+    "Petro":        "Petro",
+    "Boric":        "Borich",
+    "boric":        "borich",
+    "Lula":         "Lula",
+    "Bolsonaro":    "Bolsonaro",
+    "Maduro":       "Maduro",
+    "Chavez":       "Chaves",
+    "chavez":       "chaves",
+    "Chavez's":     "Chavesning",
+    "Mugabe":       "Mugabe",
+    "Mnangagwa":    "Mnangagva",
+    "Ramaphosa":    "Ramaphoza",
+    "ramaphosa":    "ramaphoza",
+    "Sissi":        "Sissi",
+    "Sisi":         "Sisi",
+    "MBS":          "MBS",
+    "Mohammed":     "Muhammad",
+    "Bin":          "Bin",
+    "Salman":       "Salmon",
+    "Raisi":        "Raisi",
+    "Pezeshkian":   "Pezeshkiyon",
+    "pezeshkian":   "pezeshkiyon",
+    # Joylar
+    "Gaza":         "G'azo",
+    "Kyiv":         "Kiyev",
+    "kyiv":         "kiyev",
+    "Kiev":         "Kiyev",
+    "Moscow":       "Moskva",
+    "moscow":       "moskva",
+    "Tehran":       "Tehron",
+    "tehran":       "tehron",
+    "Warsaw":       "Varshava",
+    "warsaw":       "varshava",
+    "Prague":       "Praha",
+    "prague":       "praha",
+    "Brussels":     "Bryussel",
+    "brussels":     "bryussel",
+    "Geneva":       "Jeneva",
+    "geneva":       "jeneva",
+    "Vienna":       "Vena",
+    "vienna":       "vena",
+    "Beirut":       "Bayrut",
+    "beirut":       "bayrut",
+    "Riyadh":       "Ar-Riyod",
+    "riyadh":       "ar-riyod",
+    "Doha":         "Doha",
+    "Kabul":        "Kobul",
+    "kabul":        "kobul",
+    "Khartoum":     "Xartum",
+    "khartoum":     "xartum",
+    "Rafah":        "Rafah",
+    "rafah":        "rafah",
+    "Jenin":        "Jenin",
+    "jenin":        "jenin",
+    "Aleppo":       "Xalab",
+    "aleppo":       "xalab",
+    "Tripoli":      "Tripoli",
+    "Benghazi":     "Bengazi",
+    "Nairobi":      "Nayrobi",
+    "nairobi":      "nayrobi",
+    "Mogadishu":    "Mogadisho",
+    "mogadishu":    "mogadisho",
+    "Bamako":       "Bamako",
+    "Niamey":       "Niamey",
+    "Ouagadougou":  "Vogogudu",
+    "Monrovia":     "Monroviya",
+    "Harare":       "Harare",
+    "Kinshasa":     "Kinshasa",
+    "Yangon":       "Yangon",
+    "Naypyidaw":    "Naypyido",
+    "Pyongyang":    "Phenyan",
+    "pyongyang":    "phenyan",
+    "Seoul":        "Seul",
+    "seoul":        "seul",
+    "Tokyo":        "Tokio",
+    "tokyo":        "tokio",
+    "Beijing":      "Pekin",
+    "beijing":      "pekin",
+    "Taipei":       "Tayvan",
+    "taipei":       "tayvan",
+    "New Delhi":    "Nyu-Dehli",
+    "new delhi":    "nyu-dehli",
+    "Islamabad":    "Islomobod",
+    "islamabad":    "islomobod",
+    "Dhaka":        "Daka",
+    "dhaka":        "daka",
+    # Tashkilotlar
+    "NATO":         "NATO",
+    "IAEA":         "XAEA",
+    "OPEC":         "OPEK",
+    "IMF":          "XVF",
+    "ICC":          "XJK",
+    "ICJ":          "XAD",
+    "BRICS":        "BRIKS",
+    "brics":        "briks",
+    "G7":           "G-yetti",
+    "G20":          "G-yigirma",
+    "WHO":          "JSST",
+    "WTO":          "JSD",
+}
+
+# Yil oralig'ini o'qish: "1992-1995" → til bo'yicha
+_YEAR_RANGE_PATTERNS = [
+    # "1992-1995" yoki "1992–1995" (en dash)
+    (re.compile(r'\b(\d{4})\s*[-–]\s*(\d{4})\b'), {
+        "uz": lambda m: f"{m.group(1)} yildan {m.group(2)} yilgacha",
+        "ru": lambda m: f"с {m.group(1)} по {m.group(2)} год",
+        "en": lambda m: f"from {m.group(1)} to {m.group(2)}",
+    }),
+    # "1992-yil" yoki "1992-yilgi" — yildan keyin chiziqli qo'shimcha
+    (re.compile(r'\b(\d{4})-(?:yil|yilgi|yilda|yildan|yilda)\b', re.IGNORECASE), {
+        "uz": lambda m: f"{m.group(1)} yil",
+        "ru": lambda m: f"{m.group(1)} год",
+        "en": lambda m: f"{m.group(1)}",
+    }),
+    # "1990s" → "1990-yillar" (UZ), "1990-е годы" (RU)
+    (re.compile(r'\b(\d{4})s\b'), {
+        "uz": lambda m: f"{m.group(1)}-yillar",
+        "ru": lambda m: f"{m.group(1)}-е годы",
+        "en": lambda m: f"{m.group(1)}s",
+    }),
+]
+
+# Raqamdan keyin "-chi"/"-nchi" qo'shimchasi: "5-chi" → "beshinchi"
+_NUM_SUFFIX_UZ = re.compile(r'\b(\d+)-(?:chi|nchi|inchi|nchisi|chisi)\b', re.IGNORECASE)
+_NUM_ORDINAL_UZ = {
+    1:"birinchi",2:"ikkinchi",3:"uchinchi",4:"to'rtinchi",5:"beshinchi",
+    6:"oltinchi",7:"yettinchi",8:"sakkizinchi",9:"to'qqizinchi",10:"o'ninchi",
+    11:"o'n birinchi",12:"o'n ikkinchi",13:"o'n uchinchi",14:"o'n to'rtinchi",
+    15:"o'n beshinchi",16:"o'n oltinchi",17:"o'n yettinchi",18:"o'n sakkizinchi",
+    19:"o'n to'qqizinchi",20:"yigirmanchi",21:"yigirma birinchi",
+    22:"yigirma ikkinchi",23:"yigirma uchinchi",24:"yigirma to'rtinchi",
+    25:"yigirma beshinchi",26:"yigirma oltinchi",27:"yigirma yettinchi",
+    28:"yigirma sakkizinchi",29:"yigirma to'qqizinchi",30:"o'ttizinchi",
+    31:"o'ttiz birinchi",
+}
+
+# Raqamdan keyin "-го"/"-й"/"-ый"/"-ой" (RU) — sanalar uchun
+_NUM_SUFFIX_RU = re.compile(r'\b(\d+)[-–](?:го|й|ый|ой|ей|им|ом|е|ю|х|ми|мя)\b', re.IGNORECASE)
+
+# Intro/outro iboralar (TTS dan tozalash uchun)
+_TTS_INTRO_OUTRO_RX = re.compile(
+    r'(?:^|\.\s+|\n)'                          # gap boshi yoki avvalgi gapdan keyin
+    r'(?:'
+    r'Keyingi\s+xabar[^.]*|'
+    r'Keyingi\s+yangilik[^.]*|'
+    r'Xulosa\s+qilib\s+aytganda[^.]*|'
+    r'Biz\s+(?:sizga\s+)?xabar\s+berdik[^.]*|'
+    r'Biz\s+(?:sizga\s+)?yetkazib\s+berdik[^.]*|'
+    r"O'z\s+kanalimizga\s+obuna\s+bo'ling[^.]*|"
+    r'Obuna\s+bo\'ling[^.]*|'
+    r'Like\s+bosing[^.]*|'
+    r'Далее[^.]*|'
+    r'Следующая\s+новость[^.]*|'
+    r'Следующий\s+сюжет[^.]*|'
+    r'Подписывайтесь\s+на\s+канал[^.]*|'
+    r'Ставьте\s+лайк[^.]*|'
+    r'Next\s+up[^.]*|'
+    r'Moving\s+on[^.]*|'
+    r'Stay\s+tuned[^.]*|'
+    r'Subscribe\s+to[^.]*|'
+    r'Like\s+and\s+subscribe[^.]*|'
+    r'Don\'t\s+forget\s+to\s+subscribe[^.]*'
+    r')'
+    r'(?:\.|$)',
+    re.IGNORECASE | re.MULTILINE
+)
+
+
+def _preprocess_tts_text(text: str, lang: str) -> str:
+    """TTS matnini qayta ishlash:
+    1. Yil oralig'i: "1992-1995" → "1992 yildan 1995 yilgacha" (UZ)
+    2. Raqam+qo'shimcha: "5-chi" → "beshinchi" (UZ); "1-го" → avtomat (RU)
+    3. Xorijiy ismlar: "Mladic" → "Mladich" (UZ)
+    4. Intro/outro iboralarini o'chirish
+    """
+    if not text:
+        return text
+
+    # 1. Intro/outro tozalash
+    text = _TTS_INTRO_OUTRO_RX.sub("", text).strip()
+
+    # 2. Yil oralig'i
+    for rx, handlers in _YEAR_RANGE_PATTERNS:
+        handler = handlers.get(lang)
+        if handler:
+            text = rx.sub(handler, text)
+
+    # 3. UZ: "N-chi" → so'z bilan
+    if lang == "uz":
+        def _replace_ordinal(m):
+            n = int(m.group(1))
+            return _NUM_ORDINAL_UZ.get(n, f"{n}-chi")
+        text = _NUM_SUFFIX_UZ.sub(_replace_ordinal, text)
+
+    # 4. RU: "1-го" kabi qo'shimchalarni raqam bilan (TTS o'zi o'qiydi, chiziqni olib tashlash)
+    if lang == "ru":
+        text = _NUM_SUFFIX_RU.sub(lambda m: m.group(1), text)
+
+    # 5. UZ: xorijiy ismlarni almashtirish (faqat so'z chegarasida)
+    if lang == "uz":
+        for orig, repl in _TTS_NAME_FIX_UZ.items():
+            # So'z chegarasida almashtirish
+            text = re.sub(r'\b' + re.escape(orig) + r'\b', repl, text)
+
+    # 6. Ortiqcha bo'sh joylarni tozalash
+    text = re.sub(r'\s{2,}', ' ', text).strip()
+    return text
 
 
 def _make_tts(text: str, lang: str, daraja: str, out_path: str) -> bool:
     vcfg = VOICES.get(lang, VOICES["uz"])
     cfg  = vcfg.get(daraja, vcfg.get("default", vcfg.get(list(vcfg.keys())[0])))
+    # TTS matnini qayta ishlash (yil, ismlar, intro/outro)
+    text = _preprocess_tts_text(text, lang)
     if lang == "uz":
         text = "".join(_CYR2LAT.get(c, c) for c in text)
+    if not text or not text.strip():
+        print(f"  TTS: matn bo'sh ({lang})")
+        return False
     try:
         asyncio.run(_tts_async(text, cfg["voice"], cfg.get("rate", "-5%"), out_path))
         return os.path.exists(out_path)
@@ -1432,92 +1825,79 @@ def _make_short_overlay_png(
         sarlavha: str, location: str,
         daraja: str, stats: list, lang: str,
         out_path: str) -> str:
-    """720x1280 RGBA overlay (shaffof) — Shorts uchun."""
-    accent = {"muhim": C_RED, "tezkor": (230, 130, 0), "xabar": C_ACCENT}.get(daraja, C_ACCENT)
+    """
+    720x1280 RGBA overlay — 1DAY GLOBAL brand style.
+    Qora/oq/qizil, GEO XARITA YO'Q (foydalanuvchi so'rovi).
+    """
     img  = Image.new("RGBA", (SHORT_W, SHORT_H), (0, 0, 0, 0))
     draw = ImageDraw.Draw(img)
 
-    # ── Yuqori panel ────────────────────────────────────────
-    draw.rectangle([(0, 0), (SHORT_W, 72)], fill=(4, 8, 20, 225))
-    draw.rectangle([(0, 70), (SHORT_W, 74)], fill=(*accent, 230))
-    brand = {"uz": "1КУН GLOBAL", "ru": "1ДЕНЬ GLOBAL", "en": "1DAY GLOBAL"}.get(lang, "1KUN")
-    draw.text((SHORT_W // 2, 36), brand, font=_font(30), fill=C_GOLD, anchor="mm")
+    # ── 1. Chap qizil aksent chiziq ─────────────────────────
+    draw.rectangle([(0, 0), (7, SHORT_H)], fill=(*C_RED, 245))
 
-    # ── Chap aksent bar ─────────────────────────────────────
-    draw.rectangle([(0, 0), (7, SHORT_H)], fill=(*accent, 200))
+    # ── 2. Yuqori qora panel + qizil chiziq ─────────────────
+    draw.rectangle([(0, 0), (SHORT_W, 80)], fill=(0, 0, 0, 235))
+    draw.rectangle([(0, 78), (SHORT_W, 82)], fill=(*C_RED, 255))
+    # Brend nomi
+    brand = "1DAY GLOBAL"
+    draw.text((SHORT_W // 2, 40), brand, font=_font(34), fill=C_WHITE, anchor="mm")
 
-    # ── Daraja badge ────────────────────────────────────────
-    banner = {"muhim": "⚡ MUHIM", "tezkor": "🔴 TEZKOR", "xabar": "📰 YANGILIK"}.get(daraja, "📰")
-    if lang == "ru":
-        banner = {"muhim": "⚡ СРОЧНО", "tezkor": "🔴 СРОЧНО", "xabar": "📰 НОВОСТЬ"}.get(daraja, "📰")
-    elif lang == "en":
-        banner = {"muhim": "⚡ BREAKING", "tezkor": "🔴 URGENT", "xabar": "📰 NEWS"}.get(daraja, "📰")
-    bw2 = len(banner) * 15 + 28
-    draw.rectangle([(18, 88), (18 + bw2, 134)], fill=(*accent, 245))
-    draw.text((18 + bw2 // 2, 111), banner, font=_font(26), fill=C_WHITE, anchor="mm")
+    # ── 3. Daraja badge (yuqori chap, qizil) ─────────────────
+    banners = {
+        "uz": {"muhim": "MUHIM", "tezkor": "TEZKOR", "xabar": "YANGILIK"},
+        "ru": {"muhim": "ГЛАВНОЕ", "tezkor": "СРОЧНО", "xabar": "НОВОСТЬ"},
+        "en": {"muhim": "BREAKING", "tezkor": "URGENT", "xabar": "NEWS"},
+    }
+    blabel = banners.get(lang, banners["en"]).get(daraja, "NEWS")
+    b_w = len(blabel) * 16 + 24
+    draw.rectangle([(18, 94), (18 + b_w, 136)], fill=(*C_RED, 255))
+    draw.text((18 + b_w // 2, 115), blabel,
+              font=_font(28), fill=C_WHITE, anchor="mm")
 
-    # ── Pastki gradient ─────────────────────────────────────
-    grad_h = 550
+    # ── 4. Pastki qora gradient (sarlavha zonasi) ────────────
+    grad_h = 620
     grad_img = Image.new("RGBA", (SHORT_W, grad_h), (0, 0, 0, 0))
-    g_draw   = ImageDraw.Draw(grad_img)
+    gd = ImageDraw.Draw(grad_img)
     for dy in range(grad_h):
-        alpha = int(252 * (dy / grad_h) ** 1.15)
-        g_draw.line([(0, dy), (SHORT_W, dy)], fill=(4, 8, 20, alpha))
+        alpha = int(255 * (dy / grad_h) ** 1.1)
+        gd.line([(0, dy), (SHORT_W, dy)], fill=(0, 0, 0, alpha))
     img.paste(grad_img, (0, SHORT_H - grad_h), grad_img)
 
-    # ── Sarlavha (katta, pastki 3rd) ─────────────────────────
+    # ── 5. Sarlavha (katta, pastki 1/3 qism) ─────────────────
     if sarlavha:
-        wrapped = textwrap.wrap(sarlavha, width=20)[:4]
-        ty = SHORT_H - 400
+        wrapped = textwrap.wrap(sarlavha, width=18)[:4]
+        total_h = sum([(62 if i == 0 else 56) + 14 for i in range(len(wrapped))])
+        ty = SHORT_H - 170 - total_h
         for i, line in enumerate(wrapped):
-            fs   = 56 if i == 0 else 50
-            fill = (255, 255, 255, 252) if i == 0 else (200, 212, 235, 242)
-            draw.text((20, ty + 2), line, font=_font(fs), fill=(0, 0, 0, 150))
-            draw.text((18, ty),     line, font=_font(fs), fill=fill)
+            fs   = 62 if i == 0 else 56
+            col  = (255, 255, 255, 255) if i == 0 else (200, 200, 200, 240)
+            # Soya
+            draw.text((20, ty + 2), line, font=_font(fs), fill=(0, 0, 0, 180))
+            draw.text((18, ty),     line, font=_font(fs), fill=col)
             ty += fs + 14
 
-    # ── Stats ────────────────────────────────────────────────
-    if stats:
-        stat = stats[0]
-        val  = stat.get("val", ""); unit = stat.get("unit", ""); icon = stat.get("icon", "")
-        if val:
-            box_w = 210; box_x = SHORT_W - box_w - 8; box_y = SHORT_H - 500
-            draw.rectangle([(box_x, box_y), (SHORT_W - 8, box_y + 90)], fill=(*C_NAVY, 220))
-            draw.rectangle([(box_x, box_y), (SHORT_W - 8, box_y + 4)], fill=(*C_GOLD, 230))
-            draw.text((box_x + box_w // 2, box_y + 34),
-                      f"{icon} {val}", font=_font(34), fill=(255, 255, 255, 248), anchor="mm")
-            if unit:
-                draw.text((box_x + box_w // 2, box_y + 66),
-                          unit.upper()[:10], font=_font(17, bold=False),
-                          fill=(*C_LGRAY, 210), anchor="mm")
-
-    # ── Geo karta ────────────────────────────────────────────
+    # ── 6. Location matn (sarlavha ustida, kichik) ───────────
     if location:
-        try:
-            from geo_map import draw_geo_card
-            import uuid
-            tmp_geo = os.path.join(TEMP_DIR, f"sh_geo_{uuid.uuid4().hex[:8]}.png")
-            draw_geo_card(location, tmp_geo, card_w=300, card_h=175)
-            geo_img = Image.open(tmp_geo).convert("RGBA")
-            gw, gh  = geo_img.size
-            img.paste(geo_img, (SHORT_W - gw - 6, SHORT_H - gh - 108), geo_img)
-            try: os.remove(tmp_geo)
-            except: pass
-        except Exception:
-            pass
+        loc_str = f"  {location.upper()}  "
+        lw = len(loc_str) * 10 + 10
+        loc_y = SHORT_H - 175 - total_h if sarlavha else SHORT_H - 200
+        draw.rectangle([(18, loc_y - 22), (18 + lw, loc_y + 4)],
+                        fill=(*C_RED, 200))
+        draw.text((18 + lw // 2, loc_y - 9), loc_str,
+                  font=_font(16, False), fill=C_WHITE, anchor="mm")
 
-    # ── Pastki ticker ────────────────────────────────────────
-    ticker_h = 82
+    # ── 7. Pastki qora panel + qizil chiziq + subscribe ──────
+    ticker_h = 78
     y0 = SHORT_H - ticker_h
-    draw.rectangle([(0, y0), (SHORT_W, SHORT_H)], fill=(*C_TICKER, 245))
-    draw.rectangle([(0, y0), (SHORT_W, y0 + 3)], fill=(*C_GOLD, 220))
+    draw.rectangle([(0, y0), (SHORT_W, SHORT_H)], fill=(0, 0, 0, 250))
+    draw.rectangle([(0, y0), (SHORT_W, y0 + 3)], fill=(*C_RED, 255))
     sub = {
-        "uz": "OBUNA BO'LING  🔔  #SHORTS",
-        "ru": "ПОДПИШИТЕСЬ  🔔  #SHORTS",
-        "en": "SUBSCRIBE  🔔  #SHORTS",
+        "uz": "OBUNA BO'LING  ·  #SHORTS  ·  @birkunday",
+        "ru": "ПОДПИСАТЬСЯ  ·  #SHORTS  ·  @birkunday_ru",
+        "en": "SUBSCRIBE  ·  #SHORTS  ·  @birkunday_en",
     }.get(lang, "#SHORTS")
     draw.text((SHORT_W // 2, y0 + ticker_h // 2), sub,
-              font=_font(23), fill=(*C_GOLD, 248), anchor="mm")
+              font=_font(20, False), fill=C_LGRAY, anchor="mm")
 
     img.save(out_path, "PNG")
     return out_path
@@ -1560,16 +1940,16 @@ def _upload_short(video_path: str, item: dict, lang: str) -> str | None:
     except ImportError:
         return None
     try:
-        youtube = youtube_auth()
+        youtube = youtube_auth(lang)
     except Exception as e:
-        print(f"  Short upload auth xato: {e}"); return None
+        print(f"  Short upload auth xato ({lang}): {e}"); return None
 
     today    = date.today().strftime("%d.%m.%Y")
     sarlavha = _iget(item, "sarlavha", lang)
     yt_title = f"{sarlavha} | {today}"[:100]
 
     htags = {
-        "uz": "#Shorts #Yangiliklar #BreakingNews #1КУН #Дунё #Сиёсат",
+        "uz": "#Shorts #Yangiliklar #BreakingNews #1KUN #Dunyo #Siyosat",
         "ru": "#Shorts #Новости #BreakingNews #1ДЕНЬ #Мир #Политика",
         "en": "#Shorts #News #BreakingNews #1DAY #World #Politics",
     }.get(lang, "#Shorts #News")
@@ -1641,13 +2021,21 @@ def create_short_from_item(item: dict, lang: str) -> str | None:
                 if _fetch_pexels(q, px_path, seen_pexels):
                     photo_path = px_path; all_temps.append(px_path); break
 
-    # 2. TTS (~90 so'z ≈ 35-40s)
+    # 2. TTS — to'liq script (55s video davomida gapirishi kerak, ~200+ so'z)
     voice_path = os.path.join(TEMP_DIR, f"sh_voice_{ts}.mp3")
     all_temps.append(voice_path)
     script     = (_iget(item, "scripts", lang) or
                   _iget(item, "jumla",   lang) or
                   sarlavha)
-    short_text = " ".join(script.split()[:90]) or sarlavha
+    # UZ script kirill bo'lsa — sarlavhaga fallback (TTS kirill o'qiy olmaydi)
+    if lang == "uz" and script:
+        _cyr_c = "абвгдеёжзийклмнопрстуфхцчшщъыьэюяўқғҳАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯЎҚҒҲ"
+        _al = [c for c in script if c.isalpha()]
+        if _al and sum(1 for c in _al if c in _cyr_c) / len(_al) > 0.40:
+            script = sarlavha  # Kirill → faqat sarlavha
+    # SHORT_DUR = 55s, ~150+ so'z kerak (3 so'z/sekunda)
+    # Script bo'lsa — to'liq ishlatamiz (max 300 so'z), bo'lmasa — sarlavha
+    short_text = (" ".join(script.split()[:300]) if len(script.split()) > 50 else script) or sarlavha
     voice_ok   = _make_tts(short_text, lang, daraja, voice_path)
 
     # 3. Video
@@ -1670,14 +2058,18 @@ def create_short_from_item(item: dict, lang: str) -> str | None:
         cimg = Image.new("RGB", (SHORT_W, SHORT_H), C_BG)
         _gradient_rect(ImageDraw.Draw(cimg), 0, 0, SHORT_W, SHORT_H, C_BG, C_DARK)
         cd = ImageDraw.Draw(cimg)
-        brand = {"uz": "1КУН GLOBAL", "ru": "1ДЕНЬ GLOBAL", "en": "1DAY GLOBAL"}.get(lang, "1KUN")
-        cd.text((SHORT_W // 2, 120), brand, font=_font(42), fill=C_GOLD, anchor="mm")
+        cd.rectangle([(0, 0), (SHORT_W, 80)], fill=(8, 8, 8))
+        cd.rectangle([(0, 77), (SHORT_W, 80)], fill=C_RED)
+        cd.rectangle([(0, 0), (6, SHORT_H)], fill=C_RED)
+        cd.text((SHORT_W // 2, 40), "1DAY GLOBAL", font=_font(36), fill=C_WHITE, anchor="mm")
         ty2 = 500
         for line in textwrap.wrap(sarlavha, width=20)[:4]:
             cd.text((SHORT_W // 2, ty2), line, font=_font(52), fill=C_WHITE, anchor="mm")
             ty2 += 66
-        cd.text((SHORT_W // 2, SHORT_H - 80), "#SHORTS",
-                font=_font(30), fill=C_GOLD, anchor="mm")
+        cd.rectangle([(0, SHORT_H - 60), (SHORT_W, SHORT_H)], fill=(8, 8, 8))
+        cd.rectangle([(0, SHORT_H - 60), (SHORT_W, SHORT_H - 58)], fill=C_RED)
+        cd.text((SHORT_W // 2, SHORT_H - 30), "#SHORTS  ·  1DAY GLOBAL",
+                font=_font(22), fill=C_LGRAY, anchor="mm")
         cimg.save(card_path, "JPEG", quality=92)
         ok = _still_to_video_vertical(card_path, SHORT_DUR, silent_path)
 
@@ -1726,15 +2118,15 @@ def _upload_digest(video_path: str, items: list, lang: str) -> str | None:
         print(f"  YouTube import xato: {e}")
         return None
     try:
-        youtube = youtube_auth()
+        youtube = youtube_auth(lang)
     except Exception as e:
-        print(f"  YouTube auth xato: {e}")
+        print(f"  YouTube auth xato ({lang}): {e}")
         return None
 
     today     = date.today().strftime("%d.%m.%Y")
     n         = len(items)
-    chan_name = {"uz": "1КУН GLOBAL", "ru": "1ДЕНЬ GLOBAL", "en": "1DAY GLOBAL"}.get(lang, "1KUN GLOBAL")
-    digest_label = {"uz": "Янгиликлар дайджести", "ru": "Дайджест новостей", "en": "News Digest"}.get(lang, "News Digest")
+    chan_name = "1DAY GLOBAL"
+    digest_label = {"uz": "Yangiliklar dayjesti", "ru": "Дайджест новостей", "en": "News Digest"}.get(lang, "News Digest")
 
     # SEO sarlavha: eng muhim yangilik sarlavhasi + "| X ta yangilik"
     first_title = _iget(items[0], "sarlavha", lang)
@@ -1757,7 +2149,7 @@ def _upload_digest(video_path: str, items: list, lang: str) -> str | None:
         story_lines.append("")
 
     hashtags = {
-        "uz": "#Янгиликлар #BreakingNews #1КУН #Дунё #Сиёсат #Дайджест",
+        "uz": "#Yangiliklar #BreakingNews #1KUN #Dunyo #Siyosat #Dayjest",
         "ru": "#Новости #BreakingNews #1ДЕНЬ #Мир #Политика #Дайджест",
         "en": "#News #BreakingNews #1DAY #World #Politics #Digest",
     }.get(lang, "")
@@ -1858,6 +2250,15 @@ def _mix_multi_voice(video_path: str,
     if not valid:
         return False
 
+    # Har bir ovozning real tugash vaqtini hisoblaymiz
+    # va barcha ovozlar tugaguncha video davom etishini ta'minlaymiz
+    max_voice_end = 0.0
+    for vp, start_t in valid:
+        v_dur = _audio_dur(vp)
+        max_voice_end = max(max_voice_end, start_t + v_dur)
+    # Video davomiyligi: concat videosi yoki oxirgi ovoz + 1.5s bufer — qaysi kattaroq bo'lsa
+    out_dur = max(vid_dur, max_voice_end + 1.5)
+
     cmd = ["ffmpeg", "-y", "-i", video_path]
     for vp, _ in valid:
         cmd += ["-i", vp]
@@ -1880,31 +2281,24 @@ def _mix_multi_voice(video_path: str,
         f"{''.join(vlabels)}amix=inputs={len(vlabels)}:"
         f"normalize=0:duration=longest[allv_raw]"
     )
-    # Muhim: ovoz (TTS) tugagandan keyin video oxirigacha jim (musiqa davom etsin)
-    # apad bilan [allv] ni to'liq video davomiyligiga uzaytirish
-    fc.append(f"[allv_raw]apad=whole_dur={vid_dur:.3f}[allv]")
+    # Ovoz (TTS) tugagandan keyin audio oxirigacha uzaytirish (musiqa davom etsin)
+    # out_dur = max(vid_dur, barcha ovozlar tugash vaqti + buffer)
+    fc.append(f"[allv_raw]apad=whole_dur={out_dur:.3f}[allv]")
 
     if has_music:
-        # Musiqa: video davomida past (background), TTS tugagandan keyin ham davom etadi,
-        # oxirgi OUTRO_DUR sekundlarda kuchayadi (outro swell), so'nggi 3s da fade out.
-        # volume=eval=frame:volume=expr — per-sample vaqtga bog'liq balandlik
-        swell_st    = max(0.0, vid_dur - float(OUTRO_DUR))
-        fade_out_st = max(swell_st + 1.0, vid_dur - 3.0)
-        swell_len   = max(0.1, fade_out_st - swell_st)
-        # Ifoda: background → swell (smooth) → fade out
+        # Musiqa: video davomida past (background), oxirgi 3s da fade out
+        fade_out_st = max(0.0, out_dur - 3.0)
         vol_expr = (
-            f"if(lt(t,{swell_st:.2f}),"
-            f"{MUSIC_VOL:.3f},"
             f"if(lt(t,{fade_out_st:.2f}),"
-            f"{MUSIC_VOL:.3f}+{(0.52 - MUSIC_VOL):.3f}*(t-{swell_st:.2f})/{swell_len:.2f},"
-            f"max(0.0,0.52*(1.0-(t-{fade_out_st:.2f})/3.0))))"
+            f"{MUSIC_VOL:.3f},"
+            f"max(0.0,{MUSIC_VOL:.3f}*(1.0-(t-{fade_out_st:.2f})/3.0)))"
         )
         fc.append(
             f"[{music_idx}:a]aresample=44100,"
-            f"atrim=duration={vid_dur:.3f},"
+            f"atrim=duration={out_dur:.3f},"
             f"volume=volume='{vol_expr}':eval=frame[mus]"
         )
-        # duration=first → [allv] (vid_dur uzunlikda) tugaganda to'xtaydi
+        # duration=first → [allv] (out_dur uzunlikda) tugaganda to'xtaydi
         fc.append("[allv][mus]amix=inputs=2:duration=first[aout]")
         map_a = "[aout]"
     else:
@@ -1915,7 +2309,7 @@ def _mix_multi_voice(video_path: str,
         "-map", "0:v", "-map", map_a,
         "-c:v", "copy",
         "-c:a", "aac", "-b:a", "160k",
-        "-t", f"{vid_dur:.3f}",
+        "-t", f"{out_dur:.3f}",
         "-movflags", "+faststart",
         out_path,
     ]
@@ -1965,16 +2359,8 @@ def digest_pipeline(items: list, lang: str) -> str | None:
     voice_info  = []   # [(voice_mp3_path, start_sec_in_final_video), ...]
     current_t   = 0.0  # Joriy vaqt (xfade hisobga olingan)
 
-    # ── 1. OCHILISH ───────────────────────────────────────────
-    open_img = os.path.join(TEMP_DIR, f"dg_open_{ts}.jpg")
-    open_vid = os.path.join(TEMP_DIR, f"dg_open_{ts}.mp4")
-    _make_open_card(lang, n, open_img)
-    if _still_to_video(open_img, OPEN_DUR, open_vid):
-        segments.append(open_vid)
-        durations.append(OPEN_DUR)
-        all_temps += [open_img, open_vid]
-        current_t = OPEN_DUR - TRANS_DUR   # Birinchi item shu vaqtdan boshlanadi
-    print(f"  ✓ Ochilish kartasi")
+    # ── OCHILISH KARTI YO'Q — darhol birinchi yangilikdan boshlanadi ──
+    # (Foydalanuvchi so'rovi bo'yicha intro olib tashlandi)
 
     # ── 2. HAR BIR YANGILIK ───────────────────────────────────
     for idx, item in enumerate(items):
@@ -2012,37 +2398,108 @@ def digest_pipeline(items: list, lang: str) -> str | None:
 
         print(f"  ─ Yangilik {story_num}/{n}: {sarlavha[:55]}")
 
-        # -- 2a. Per-item TTS: sarlavha + to'liq script (450-500 so'z ≈ ~2.5 daqiqa)
+        # -- 2a. Per-item TTS: faqat body_text (script/jumla1)
+        # sarlavha TTS ga QЎШILMAYDI — script o'zi sarlavhani o'z ichiga oladi,
+        # ikki marta o'qib berilishini oldini olish uchun
         tts_parts = []
-        if sarlavha:
-            tts_parts.append(sarlavha.strip())
 
         # Script (to'liq naratsiya) — jumla1 dan ustunroq
         script_text = _iget(item, "scripts", lang) or _iget(item, "script", lang) or ""
         script_text = script_text.strip()
 
-        # Intro/outro iboralarini tozalash
-        script_text = re.sub(
-            r"^(Efirda\s+1KUN\s+Global\.?|В\s+эфире\s+1ДЕНЬ\s+Global\.?|"
-            r"This\s+is\s+1DAY\s+Global\.?)\s*",
-            "", script_text, flags=re.IGNORECASE
-        ).strip()
+        # Intro/outro iboralarini keng tozalash
+        _intro_rx = re.compile(
+            r"^(?:"
+            r"Efirda\s+1KUN[^.]*\.|"
+            r"В\s+эфире\s+1ДЕНЬ[^.]*\.|"
+            r"This\s+is\s+1DAY[^.]*\.|"
+            r"Assalomu\s+alaykum[^.]*\.|"
+            r"Salom\s+aziz[^.]*\.|"
+            r"Xurmatli\s+tomoshabinlar[^.]*\.|"
+            r"Hurmatli\s+tomoshabinlar[^.]*\.|"
+            r"Diqqatingizga\s+taqdim\s+etamiz[^.]*\.|"
+            r"Bugungi\s+diJest[^.]*\.|"
+            r"Bugungi\s+yangiliklar[^.]*\.|"
+            r"Здравствуйте[^.]*\.|"
+            r"Добрый\s+(?:день|вечер|утро)[^.]*\.|"
+            r"Уважаемые\s+зрители[^.]*\.|"
+            r"Представляем\s+вашему\s+вниманию[^.]*\.|"
+            r"Good\s+(?:morning|evening|afternoon)[^.]*\.|"
+            r"Dear\s+viewers[^.]*\.|"
+            r"Welcome\s+to[^.]*\."
+            r")\s*",
+            re.IGNORECASE
+        )
+        for _ in range(3):   # Bir nechta intro gap bo'lishi mumkin
+            script_text = _intro_rx.sub("", script_text).strip()
+
+        # Outro iboralarini ham tozalash (oxirida)
+        _outro_rx = re.compile(
+            r'(?:\s*[\.\!\?])?\s*'
+            r'(?:'
+            r'Obuna\s+bo\'ling[^.]*|'
+            r"O'z\s+kanalimizga[^.]*|"
+            r'Like\s+bosing[^.]*|'
+            r'Kanali[mn]izga\s+obuna[^.]*|'
+            r'Xayrli\s+kun[^.]*|'
+            r'Keyingi\s+(?:xabar|yangilik)[^.]*|'
+            r'Podpisyvayties[^.]*|'
+            r'Подписывайтесь[^.]*|'
+            r'Ставьте\s+лайк[^.]*|'
+            r'До\s+свидания[^.]*|'
+            r'Хорошего\s+дня[^.]*|'
+            r'Subscribe[^.]*|'
+            r'Like\s+and[^.]*|'
+            r'Stay\s+tuned[^.]*|'
+            r'Next\s+up[^.]*|'
+            r'Moving\s+on[^.]*'
+            r')'
+            r'[\.\!\?]?\s*$',
+            re.IGNORECASE
+        )
+        for _ in range(3):
+            script_text = _outro_rx.sub("", script_text).strip()
+
+        # ── UZ script kirill bo'lsa — TTS o'qiy olmaydi → tozalash ──
+        if lang == "uz" and script_text:
+            _cyr_chars = "абвгдеёжзийклмнопрстуфхцчшщъыьэюяўқғҳАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯЎҚҒҲ"
+            _alpha = [c for c in script_text if c.isalpha()]
+            if _alpha and sum(1 for c in _alpha if c in _cyr_chars) / len(_alpha) > 0.40:
+                log.info(f"  ⚠️  UZ script kirill ({sum(1 for c in _alpha if c in _cyr_chars)/len(_alpha):.0%}) → o'chirildi, yangi generatsiya qilinadi")
+                script_text = ""   # Kirill UZ TTS uchun yaroqsiz
 
         body_text = script_text or jumla1 or ""
 
-        # Script qisqa bo'lsa (<60 so'z) — Anthropic bilan yangi script yaratish
+        # Script qisqa bo'lsa (<60 so'z) — AI bilan yangi script yaratish
         if len(body_text.split()) < 60:
-            log.info(f"  🔄 Script qisqa ({len(body_text.split())} so'z) → Anthropic bilan generatsiya...")
+            log.info(f"  🔄 Script qisqa ({len(body_text.split())} so'z) → AI bilan generatsiya...")
             generated = _generate_script(en_title, jumla1, lang)
             if generated and len(generated.split()) >= 50:
                 body_text = generated
+            else:
+                # AI ham ishlamasa — jumla1 + jumla2 birlashtirish
+                jumla2 = _iget(item, "jumla2", lang) or _iget(item, "jumla", lang) or ""
+                fallback = " ".join(filter(None, [jumla1, jumla2])).strip()
+                if len(fallback.split()) >= 10:
+                    log.info(f"  ⚠️  AI muvaffaqiyatsiz → jumla1+jumla2 fallback ({len(fallback.split())} so'z)")
+                    body_text = fallback
+                elif sarlavha:
+                    # Eng oxirgi chora: sarlavhani kengaytirish
+                    log.info(f"  ⚠️  Hech narsa yo'q → sarlavha takrorlash")
+                    body_text = sarlavha
 
         if body_text and body_text.strip() != sarlavha.strip():
             # 220 so'z ≈ ~90-110 soniya (1.5 daqiqa) — minimal 30s kafolat
             body_words = body_text.split()[:220]
             tts_parts.append(" ".join(body_words))
+        elif body_text:
+            # body_text sarlavha bilan bir xil bo'lsa — baribir qo'shish (TTS bo'sh qolmasin)
+            tts_parts.append(body_text.strip())
 
         tts_text = ". ".join(tts_parts) if tts_parts else (sarlavha or "")
+        if not tts_text or not tts_text.strip():
+            log.warning(f"  ⚠️  {story_num}-yangilik TTS matni bo'sh! sarlavha ishlatiladi.")
+            tts_text = sarlavha or en_title or ""
 
         voice_i   = os.path.join(TEMP_DIR, f"dg_voice_{ts}_{idx:02d}.mp3")
         all_temps.append(voice_i)
@@ -2111,18 +2568,11 @@ def digest_pipeline(items: list, lang: str) -> str | None:
                 durations.append(seg_dur)
                 print(f"     ✓ Segment {seg_dur:.1f}s + overlay")
 
-                # -- 2d. INFOGRAFIK SLAYD (stats/nomlar mavjud bo'lsa — 4s qo'shimcha)
-                if stats or person_q:
-                    info_img = os.path.join(TEMP_DIR, f"dg_info_{ts}_{idx:02d}.jpg")
-                    info_vid = os.path.join(TEMP_DIR, f"dg_info_{ts}_{idx:02d}.mp4")
-                    all_temps += [info_img, info_vid]
-                    _make_infographic_card(sarlavha, stats, person_q, lang, info_img)
-                    INFO_DUR = 4.0
-                    if _still_to_video(info_img, INFO_DUR, info_vid):
-                        segments.append(info_vid)
-                        durations.append(INFO_DUR)
-                        # Infografik uchun ovoz yo'q (current_t allaqachon hisoblangan)
-                        print(f"     ✓ Infografik slayd {INFO_DUR:.0f}s")
+                # -- 2d. INFOGRAFIK SLAYD — O'CHIRILGAN
+                # Yangiliklar orasida qo'shimcha slayd kerak emas:
+                # yangilikdan yangilikka to'g'ridan-to'g'ri o'tish kerak
+                if False:  # stats or person_q:
+                    pass
                 continue
 
         # Fallback: sarlavha karta (matn baked-in, statik)
@@ -2134,15 +2584,8 @@ def digest_pipeline(items: list, lang: str) -> str | None:
             durations.append(seg_dur)
             print(f"     ✓ Segment {seg_dur:.1f}s (karta fallback)")
 
-    # ── 3. YAKUNLASH ──────────────────────────────────────────
-    outro_img = os.path.join(TEMP_DIR, f"dg_outro_{ts}.jpg")
-    outro_vid = os.path.join(TEMP_DIR, f"dg_outro_{ts}.mp4")
-    _make_outro_card(lang, outro_img)
-    if _still_to_video(outro_img, OUTRO_DUR, outro_vid):
-        segments.append(outro_vid)
-        durations.append(OUTRO_DUR)
-        all_temps += [outro_img, outro_vid]
-    print(f"  ✓ Yakunlash kartasi")
+    # ── 3. YAKUNLASH YO'Q — foydalanuvchi so'rovi bo'yicha outro olib tashlandi ──
+    # (barcha video turlaridan intro/outro olib tashlangan)
 
     if not segments:
         print("  ⚠️  Hech bir segment yaratilmadi")
@@ -2179,9 +2622,11 @@ def digest_pipeline(items: list, lang: str) -> str | None:
     dur = sum(durations)
     print(f"\n  ✅ {out_name}  ({sz:.1f} MB, ~{dur:.0f}s)")
 
-    # ── 8. YOUTUBE YUKLASH ────────────────────────────────────
-    yt_vid_id = _upload_digest(out_path, items, lang)
-    yt_url    = f"https://youtu.be/{yt_vid_id}" if yt_vid_id else ""
+    # ── 8. YOUTUBE YUKLASH — upload_pending.py orqali (ikki marta yuklash yo'q) ──
+    # digest_maker.py video yaratadi va saqlaydi → upload_pending.py yuklaydi
+    # Bu yerda to'g'ridan-to'g'ri yuklamaslik uchun o'chirildi
+    yt_vid_id = None
+    yt_url    = ""
 
     # ── 9. SHORT YARATISH (har digest bilan birga) ────────────
     best_item = None
@@ -2218,16 +2663,16 @@ def digest_pipeline(items: list, lang: str) -> str | None:
         _tz = _pytz.timezone("Asia/Tashkent")
         _vaqt = _dtt.now(_tz).strftime("🕐 %H:%M | %d.%m.%Y")
         _n = len(items)
-        # 1 ta yangilik bo'lsa "DIGEST" emas, oddiy "ЯНГИЛИК" deyiladi
+        # 1 ta yangilik bo'lsa "DIGEST" emas, oddiy "YANGILIK" deyiladi
         if _n == 1:
             _digest_title = {
-                "uz": "📰 ЯНГИЛИК",
+                "uz": "📰 YANGILIK",
                 "ru": "📰 НОВОСТЬ",
                 "en": "📰 NEWS",
             }.get(lang, "📰 NEWS")
         else:
             _digest_title = {
-                "uz": f"📋 ЯНГИЛИКЛАР ДАЙДЖЕСТИ — {_n} та янгилик",
+                "uz": f"📋 YANGILIKLAR DAYJESTI — {_n} ta yangilik",
                 "ru": f"📋 ДАЙДЖЕСТ НОВОСТЕЙ — {_n} новости",
                 "en": f"📋 NEWS DIGEST — {_n} stories",
             }.get(lang, f"📋 DIGEST — {_n} stories")
@@ -2253,7 +2698,7 @@ def digest_pipeline(items: list, lang: str) -> str | None:
             _lines.append(f"▶️ {yt_url}")
         _lines.append(f"📰 {_kanal}")
         _htag = {
-            "uz": "#Янгиликлар #Дайджест #1КУН",
+            "uz": "#Yangiliklar #Dayjest #1KUN",
             "ru": "#Новости #Дайджест #1День",
             "en": "#News #Digest #1Day",
         }.get(lang, "#Digest")
