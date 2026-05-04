@@ -155,13 +155,19 @@ def _run_pipeline_inner():
         d = groq_translate(article["title"], article["description"], article["source"])
     except Exception as e:
         log.error(f"Barcha tarjimon servislari muvaffaqiyatsiz: {e}")
-        # Tarjima to'liq muvaffaqiyatsiz — faqat EN kanalga inglizcha post yuboramiz
+        # Tarjima to'liq muvaffaqiyatsiz — barcha 3 kanalga inglizcha post yuboramiz
         _desc = (article.get("description", "") or article.get("title", "")).strip()
-        log.warning("⚠️  Faqat EN kanalga inglizcha post yuborilmoqda (tarjima yo'q)...")
+        _title = article.get("title", "")
+        log.warning("⚠️  Tarjima yo'q — barcha 3 kanalga inglizcha matn yuborilmoqda...")
         d = {
-            "sarlavha_uz": "", "jumla1_uz": "", "jumla2_uz": "",
-            "sarlavha_ru": "", "jumla1_ru": "", "jumla2_ru": "",
-            "sarlavha_en": article.get("title", "")[:80],
+            # UZ/RU kanallariga ham inglizcha sarlavha va matn (tarjima yo'q bo'lganda)
+            "sarlavha_uz": _title[:120],
+            "jumla1_uz":   _desc[:500],
+            "jumla2_uz":   "",
+            "sarlavha_ru": _title[:120],
+            "jumla1_ru":   _desc[:500],
+            "jumla2_ru":   "",
+            "sarlavha_en": _title[:120],
             "jumla1_en":   _desc[:500],
             "jumla2_en":   "",
             "script_uz":   "", "script_ru": "",
@@ -170,11 +176,11 @@ def _run_pipeline_inner():
             "hashtag_uz":  "#Yangilik #1KUN",
             "hashtag_ru":  "#Новости #1День",
             "hashtag_en":  "#News #World #1Day",
-            "keywords_en": article.get("title", "").split()[:5],
-            "search_queries": [article.get("title", "")[:50]],
+            "keywords_en": _title.split()[:5],
+            "search_queries": [_title[:50]],
             "location_uz": "", "location_ru": "", "location_en": "",
             "shot_list":   [], "hook_uz": "", "hook_ru": "",
-            "hook_en":     article.get("title", "")[:50],
+            "hook_en":     _title[:50],
         }
 
     save_seen_link(article["link"], title=article.get("title", ""), keywords=d.get("keywords_en", []))

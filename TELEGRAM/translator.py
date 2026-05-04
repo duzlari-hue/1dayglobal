@@ -111,30 +111,26 @@ _BAD_TITLES = {
 }
 
 def _is_valid_title(text: str, lang: str = "uz") -> bool:
-    """Sarlavha to'g'ri ekanligini tekshirish."""
+    """Sarlavha to'g'ri ekanligini tekshirish — minimal cheklovlar."""
     if not text or not text.strip():
         return False
     t = text.strip()
     if t.lower() in _BAD_TITLES:
         return False
-    if len(t) < 8:          # juda qisqa
+    if len(t) < 5:          # juda qisqa (8 dan 5 ga tushirildi)
         return False
-    if len(t) > 150:        # juda uzun
+    if len(t) > 300:        # juda uzun (150 dan 300 ga oshirildi)
         return False
     words = t.split()
-    if len(words) < 3:      # kamida 3 so'z
+    if len(words) < 2:      # kamida 2 so'z (3 dan 2 ga tushirildi)
         return False
-    # UZ sarlavha — lotin alifbosida bo'lishi kerak (Kirill EMAS)
-    if lang == "uz":
-        pass  # Lotin qabul qilinadi
-    # RU sarlavha — kamida 40% harflari kirill bo'lishi kerak
-    # ("Voennaya sila ne v sostoyanii..." kabi lotin translit — yaroqsiz)
+    # RU sarlavha — kamida 30% kirill (40% dan pastlatildi)
     if lang == "ru":
         _letters = [c for c in t if c.isalpha()]
         if _letters:
             _cyr_n = sum(1 for c in _letters if c in _CYR)
-            if _cyr_n / len(_letters) < 0.40:
-                return False  # asosan lotin — qayta so'rash kerak
+            if _cyr_n / len(_letters) < 0.30:
+                return False
     return True
 
 

@@ -576,9 +576,10 @@ def _ensure_cyr(text: str) -> str:
     return ""
 
 
-def _has_body(jumla1: str, jumla2: str = "", min_chars: int = 60) -> bool:
+def _has_body(jumla1: str, jumla2: str = "", min_chars: int = 20) -> bool:
     """Post matni yetarli ekanligini tekshirish.
-    Kamida bitta jumla min_chars belgidan uzun bo'lishi kerak."""
+    Kamida bitta jumla min_chars belgidan uzun bo'lishi kerak.
+    min_chars 60 dan 20 ga tushirildi — qisqa tarjimalar ham o'tsin."""
     j1 = (jumla1 or "").strip()
     j2 = (jumla2 or "").strip()
     return len(j1) >= min_chars or len(j2) >= min_chars
@@ -659,6 +660,11 @@ def send_all_languages(d, article):
             _j2_ru = _j2_ru or " ".join(_sents_ru[3:6])[:400].strip()
             log.info("  RU jumla: script_ru dan olinmoqda")
 
+    # Fallback: sarlavha_ru bo'sh bo'lsa — sarlavha_en ishlatish
+    if not _sarlavha_ru:
+        _sarlavha_ru = (d.get("sarlavha_en", "") or "").strip()
+        if _sarlavha_ru:
+            log.warning("⚠️  sarlavha_ru bo'sh — sarlavha_en ishlatilmoqda")
     if not _sarlavha_ru:
         log.warning("⚠️  sarlavha_ru bo'sh — RU post o'tkazildi")
     elif not _has_body(_j1_ru, _j2_ru):

@@ -198,8 +198,10 @@ def save_seen_link(link, title="", keywords=None):
                 f.write(f"__kw__{kw.lower()}\n")
 
 
-def is_topic_seen(title: str, threshold: int = 2) -> bool:
-    """Sarlavha so'nggi yangiliklardagi mavzu bilan mos kelsa True qaytaradi."""
+def is_topic_seen(title: str, threshold: int = 3) -> bool:
+    """Sarlavha so'nggi yangiliklardagi mavzu bilan mos kelsa True qaytaradi.
+    threshold=3 — kamida 3 ta umumiy so'z o'zagi bo'lsa duplikat (2 dan 3 ga oshirildi).
+    Bu kamroq noto'g'ri rad etishlar demak."""
     if not title or not os.path.exists(SEEN_LINKS_FILE):
         return False
     new_stems = _title_stems(title)
@@ -207,8 +209,8 @@ def is_topic_seen(title: str, threshold: int = 2) -> bool:
         return False
     with open(SEEN_LINKS_FILE, "r", encoding="utf-8") as f:
         lines = [l.strip() for l in f if l.strip().startswith("__title__")]
-    # Faqat so'nggi 200 ta yozuvni tekshirish
-    for line in lines[-200:]:
+    # So'nggi 100 ta yozuvni tekshirish (200 dan 100 ga — yangilik yangilansin)
+    for line in lines[-100:]:
         saved_stems = set(line.replace("__title__", "").split(","))
         if len(new_stems & saved_stems) >= threshold:
             return True
@@ -226,7 +228,7 @@ def fetch_rss_news(count=10):
     for feed_info in feeds:
         try:
             feed = feedparser.parse(feed_info["url"])
-            for entry in feed.entries[:8]:   # har kanaldan ko'proq olish
+            for entry in feed.entries[:15]:   # har kanaldan ko'proq olish (8→15)
                 title = entry.get("title", "").strip()
                 link  = entry.get("link",  "").strip()
                 desc  = entry.get("summary", entry.get("description", "")).strip()
