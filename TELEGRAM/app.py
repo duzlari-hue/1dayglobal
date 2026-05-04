@@ -25,7 +25,8 @@ from apscheduler.triggers.cron import CronTrigger
 from config import TASHKENT, SCHEDULE_HOURS, TELEGRAM_CHANNEL_UZ
 from rss import fetch_rss_news, save_seen_link
 from translator import groq_translate
-from telegram_bot import send_all_languages, send_daily_digest_all
+from telegram_bot import send_all_languages, send_daily_digest_all, \
+                         send_en_from_rss, send_uz_ru_languages
 from photo_of_day import run_photo_of_day, run_hayrat_nigoh, run_kun_fotosi
 
 # ── YouTube special shorts (YOUTUBE papkasidan import) ─────────
@@ -150,49 +151,63 @@ def _run_pipeline_inner():
 
     log.info(f"📰 {article['title'][:70]}...")
 
-    # 2. Tarjima (Gemini → OpenRouter zanjiri)
+    # ── YANGI 2 BOSQICHLI PIPELINE ──────────────────────────────
+    #
+    # BOSQICH 1: EN kanalga RSS DAN DARHOL post (tarjima kutilmaydi)
+    #   → inglizcha material har doim to'liq va tez chop etiladi
+    #
+    # BOSQICH 2: AI tarjima → UZ + RU kanallariga post
+    #   → agar tarjima muvaffaqiyatli bo'lsa — UZ/RU ham chop etiladi
+    #   → agar tarjima muvaffaqiyatsiz bo'lsa — faqat EN chop etilgan bo'ladi
+    # ──────────────────────────────────────────────────────────────
+
+    # 2. BOSQICH 1: EN darhol chop etish (RSS dan, AI yo'q)
+    log.info("📤 EN kanal: RSS dan darhol chop etilmoqda...")
+    send_en_from_rss(article)
+    save_seen_link(article["link"], title=article.get("title", ""), keywords=[])
+
+    # 3. BOSQICH 2: AI tarjima (UZ + RU uchun)
+    d = None
     try:
+        log.info("🌐 AI tarjima: UZ + RU uchun...")
         d = groq_translate(article["title"], article["description"], article["source"])
+        log.info("✅ AI tarjima muvaffaqiyatli")
     except Exception as e:
-        log.error(f"Barcha tarjimon servislari muvaffaqiyatsiz: {e}")
-        # Tarjima to'liq muvaffaqiyatsiz — barcha 3 kanalga inglizcha post yuboramiz
-        _desc = (article.get("description", "") or article.get("title", "")).strip()
+        log.error(f"⚠️  AI tarjima muvaffaqiyatsiz: {e}")
+        log.warning("   EN allaqachon chop etildi. UZ/RU o'tkazildi.")
+
+    # 4. UZ + RU chop etish (agar tarjima muvaffaqiyatli bo'lsa)
+    if d:
+        send_uz_ru_languages(d, article)
+        # keywords ni seen_links ga yangilash
+        if d.get("keywords_en"):
+            save_seen_link(article["link"],
+                          title=article.get("title",""),
+                          keywords=d.get("keywords_en", []))
+    else:
+        # Tarjima yo'q — minimal d tuzamiz (YouTube queue uchun)
         _title = article.get("title", "")
-        log.warning("⚠️  Tarjima yo'q — barcha 3 kanalga inglizcha matn yuborilmoqda...")
+        _desc  = (article.get("description", "") or _title).strip()
         d = {
-            # UZ/RU kanallariga ham inglizcha sarlavha va matn (tarjima yo'q bo'lganda)
-            "sarlavha_uz": _title[:120],
-            "jumla1_uz":   _desc[:500],
-            "jumla2_uz":   "",
-            "sarlavha_ru": _title[:120],
-            "jumla1_ru":   _desc[:500],
-            "jumla2_ru":   "",
-            "sarlavha_en": _title[:120],
-            "jumla1_en":   _desc[:500],
-            "jumla2_en":   "",
-            "script_uz":   "", "script_ru": "",
-            "script_en":   _desc,
-            "daraja":      "xabar",
-            "hashtag_uz":  "#Yangilik #1KUN",
-            "hashtag_ru":  "#Новости #1День",
-            "hashtag_en":  "#News #World #1Day",
+            "sarlavha_uz": "", "jumla1_uz": "", "jumla2_uz": "",
+            "sarlavha_ru": "", "jumla1_ru": "", "jumla2_ru": "",
+            "sarlavha_en": _title[:120], "jumla1_en": _desc[:500], "jumla2_en": "",
+            "script_uz": "", "script_ru": "", "script_en": _desc,
+            "daraja": "xabar",
+            "hashtag_uz": "#Yangilik #1KUN",
+            "hashtag_ru": "#Новости #1День",
+            "hashtag_en": "#News #World #1Day",
             "keywords_en": _title.split()[:5],
             "search_queries": [_title[:50]],
             "location_uz": "", "location_ru": "", "location_en": "",
-            "shot_list":   [], "hook_uz": "", "hook_ru": "",
-            "hook_en":     _title[:50],
+            "shot_list": [], "hook_uz": "", "hook_ru": "", "hook_en": _title[:50],
         }
 
-    save_seen_link(article["link"], title=article.get("title", ""), keywords=d.get("keywords_en", []))
-
-    # 3. Telegram — 3 kanalga 3 tilda
-    send_all_languages(d, article)
-
-    # 4. Kunlik digest buferiga qo'shish
+    # 5. Kunlik digest buferiga qo'shish
     _DAILY_BUFFER.append(d)
     log.info(f"📝 Digest buffer: {len(_DAILY_BUFFER)} ta yangilik")
 
-    # 5. YouTube queue — yangilikni qo'shish
+    # 6. YouTube queue — yangilikni qo'shish
     _save_to_youtube_queue(d, article)
 
     # 6. YouTube Shorts — har bir yangilikdan keyin (soatga qarab navbat bilan)

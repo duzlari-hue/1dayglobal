@@ -706,6 +706,150 @@ def send_all_languages(d, article):
 
 
 # ══════════════════════════════════════════════════════════════
+# EN kanalga RSS DAN BEVOSITA post (tarjima kutilmaydi)
+# ══════════════════════════════════════════════════════════════
+def send_en_from_rss(article: dict) -> bool:
+    """
+    Inglizcha kanalga RSS manbadan bevosita post yuborish.
+    AI tarjima kutilmaydi — darhol chop etiladi.
+    article: {"title": str, "description": str, "link": str, "source": str}
+    """
+    title = (article.get("title", "") or "").strip()
+    desc  = (article.get("description", "") or "").strip()
+    source = (article.get("source", "") or "").strip()
+    link   = article.get("link", "")
+
+    if not title:
+        log.warning("send_en_from_rss: title bo'sh — o'tkazildi")
+        return False
+
+    # Matnni 2 qismga bo'lish (jumla1 + jumla2)
+    sents = re.split(r'(?<=[.!?…])\s+', desc.strip()) if desc else []
+    if len(sents) >= 4:
+        mid = len(sents) // 2
+        j1 = " ".join(sents[:mid]).strip()
+        j2 = " ".join(sents[mid:]).strip()
+    else:
+        j1 = desc[:500]
+        j2 = ""
+
+    # Hashtag — sarlavhadan kalit so'zlar
+    kw_words = [w for w in title.split() if len(w) > 4 and w[0].isupper()][:3]
+    hashtags = " ".join(f"#{w}" for w in kw_words) + " #News #World #1Day"
+
+    post = make_post(title, j1, j2, "xabar", hashtags, "", "en")
+
+    # Rasm: og:image dan
+    _ts  = datetime.now().strftime("%Y%m%d_%H%M%S")
+    photo = None
+    og_p  = _pl.Path(_tf.gettempdir()) / f"tg_en_og_{_ts}.jpg"
+    if _fetch_og_image(link, str(og_p)):
+        photo = str(og_p)
+    elif not photo:
+        # Fallback: Pexels sarlavhadan
+        px_p = _pl.Path(_tf.gettempdir()) / f"tg_en_px_{_ts}.jpg"
+        if _fetch_pexels(title[:60], str(px_p)):
+            photo = str(px_p)
+
+    ok = _send_with_photo(post, TELEGRAM_CHANNEL_EN, photo)
+    if ok:
+        log.info(f"✅ Telegram EN (RSS) → {TELEGRAM_CHANNEL_EN}")
+    else:
+        log.warning(f"⚠️  Telegram EN (RSS) yuborishda xato")
+
+    # Vaqtinchalik faylni o'chirish
+    for p in [photo]:
+        if p:
+            try: os.remove(p)
+            except Exception: pass
+
+    return ok
+
+
+def send_uz_ru_languages(d: dict, article: dict):
+    """
+    Faqat UZ va RU kanallariga AI tarjima asosida post yuborish.
+    EN kanal allaqachon RSS dan yuborilgan — bu yerda EN chiqarilmaydi.
+    """
+    daraja = d.get("daraja", "xabar")
+    _ts    = datetime.now().strftime("%Y%m%d_%H%M%S")
+    _kws   = d.get("keywords_en", [])
+    _raw_photo = _find_article_photo(article, _kws, f"tg_{_ts}")
+    _source = (article.get("source") or article.get("link", "")
+               .replace("https://","").replace("http://","").split("/")[0])[:22]
+
+    def _make_card(sarlavha, jumla1, lang, suffix):
+        if not _PIL_OK:
+            return None
+        try:
+            cp = str(_pl.Path(_tf.gettempdir()) / f"tg_card_{_ts}_{suffix}.jpg")
+            if _make_news_card(_raw_photo, sarlavha, jumla1, daraja, _source, lang, cp):
+                return cp
+        except Exception as _e:
+            log.warning(f"News card [{lang}]: {_e}")
+        return _raw_photo
+
+    # ── O'ZBEK ───────────────────────────────────────────────────
+    _sarlavha_uz = (d.get("sarlavha_uz", "") or "").strip()
+    _j1_uz = (d.get("jumla1_uz", "") or "").strip()
+    _j2_uz = (d.get("jumla2_uz", "") or "").strip()
+
+    if not _j1_uz:
+        _script_uz = (d.get("script_uz", "") or "").strip()
+        if _script_uz and len(_script_uz) > 60:
+            _sents = re.split(r'(?<=[.!?])\s+', _script_uz)
+            _j1_uz = " ".join(_sents[:3])[:500].strip()
+            _j2_uz = _j2_uz or " ".join(_sents[3:6])[:400].strip()
+
+    if not _sarlavha_uz:
+        _sarlavha_uz = (d.get("sarlavha_en", "") or "").strip()
+    if not _sarlavha_uz:
+        log.warning("⚠️  sarlavha_uz bo'sh — UZ post o'tkazildi")
+    elif not _has_body(_j1_uz, _j2_uz):
+        log.warning(f"⚠️  UZ matn qisqa — UZ post o'tkazildi")
+    else:
+        post_uz  = make_post(_sarlavha_uz, _j1_uz, _j2_uz,
+                             daraja, d.get("hashtag_uz","#Yangilik #1KUN"),
+                             d.get("location_uz",""), "uz")
+        _card_uz = _make_card(_sarlavha_uz, _j1_uz, "uz", "uz")
+        if _send_with_photo(post_uz, TELEGRAM_CHANNEL_UZ, _card_uz):
+            log.info(f"✅ Telegram UZ → {TELEGRAM_CHANNEL_UZ}")
+
+    # ── RUS ───────────────────────────────────────────────────────
+    _sarlavha_ru = (d.get("sarlavha_ru", "") or "").strip()
+    _j1_ru = (d.get("jumla1_ru", "") or "").strip()
+    _j2_ru = (d.get("jumla2_ru", "") or "").strip()
+
+    if not _j1_ru:
+        _script_ru = (d.get("script_ru", "") or "").strip()
+        if _script_ru and len(_script_ru) > 60:
+            _sents_ru = re.split(r'(?<=[.!?])\s+', _script_ru)
+            _j1_ru = " ".join(_sents_ru[:3])[:500].strip()
+            _j2_ru = _j2_ru or " ".join(_sents_ru[3:6])[:400].strip()
+
+    if not _sarlavha_ru:
+        _sarlavha_ru = (d.get("sarlavha_en", "") or "").strip()
+        if _sarlavha_ru:
+            log.warning("⚠️  sarlavha_ru bo'sh — sarlavha_en ishlatilmoqda")
+    if not _sarlavha_ru:
+        log.warning("⚠️  sarlavha_ru bo'sh — RU post o'tkazildi")
+    elif not _has_body(_j1_ru, _j2_ru):
+        log.warning(f"⚠️  RU matn qisqa — RU post o'tkazildi")
+    else:
+        post_ru  = make_post(_sarlavha_ru, _j1_ru, _j2_ru,
+                             daraja, d.get("hashtag_ru","#Новости #1День"),
+                             d.get("location_ru",""), "ru")
+        _card_ru = _make_card(_sarlavha_ru, _j1_ru, "ru", "ru")
+        if _send_with_photo(post_ru, TELEGRAM_CHANNEL_RU, _card_ru):
+            log.info(f"✅ Telegram RU → {TELEGRAM_CHANNEL_RU}")
+
+    for _p in [_raw_photo]:
+        if _p:
+            try: os.remove(_p)
+            except Exception: pass
+
+
+# ══════════════════════════════════════════════════════════════
 # Kunlik digest — 5-6 ta yangilik bir postda (kechqurun)
 # ══════════════════════════════════════════════════════════════
 def send_daily_digest(articles: list, lang: str = "uz"):
