@@ -450,16 +450,19 @@ def _find_article_photo(article: dict, keywords_en: list, tmp_prefix: str) -> st
         log.info("  📷 og:image topildi")
         return og_path
 
-    # 2. Pexels — keywords_en bilan qidirish
+    # 2. Pexels — aniq qidiruv so'rovlari (noto'g'ri odam rasmi chiqmasin)
     queries = []
-    if keywords_en:
-        queries.append(" ".join(keywords_en[:3]))
     title = article.get("title", "")
-    if title:
-        # Birinchi 3-5 ta so'z
-        words = [w for w in title.split() if len(w) > 3][:4]
-        if words:
-            queries.append(" ".join(words))
+    # Birinchi urinish: to'liq sarlavha (eng aniq)
+    if title and len(title) > 10:
+        queries.append(title[:80])
+    # Ikkinchi urinish: keywords (shaxs + joylashuv birlashtirish)
+    if keywords_en and len(keywords_en) >= 2:
+        # Faqat birinchi 2 ta kalit so'z — juda ko'p so'z noto'g'ri rasm beradi
+        queries.append(" ".join(keywords_en[:2]))
+    # Uchinchi urinish: bitta eng muhim kalit so'z
+    if keywords_en:
+        queries.append(keywords_en[0])
     for q in queries:
         px_path = str(tmp_dir / f"{tmp_prefix}_px.jpg")
         if _fetch_pexels(q, px_path):

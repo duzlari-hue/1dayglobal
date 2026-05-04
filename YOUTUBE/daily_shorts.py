@@ -507,6 +507,10 @@ def make_silence(duration, out_path):
 # TTS matni: tartib raqami + SARLAVHA
 # ─────────────────────────────────────────────────────────────
 def build_tts_text(number, sarlavha, lang):
+    """Tartib raqamini e'lon qiladi — SARLAVHA QO'SHILMAYDI.
+    Sarlavha jumla ichida allaqachon bor — ikki marta o'qilmasin.
+    Faqat: "Birinchi yangilik." / "Первая новость." / "First news."
+    """
     ordinals = {
         "uz": ["Birinchi","Ikkinchi","Uchinchi","To'rtinchi","Beshinchi"],
         "ru": ["Первая","Вторая","Третья","Четвёртая","Пятая"],
@@ -515,30 +519,8 @@ def build_tts_text(number, sarlavha, lang):
     idx      = max(0, min(number-1, 4))
     ord_word = ordinals.get(lang, ordinals["uz"])[idx]
     sfx      = {"uz":" yangilik.","ru":" новость.","en":" news."}
-    text     = ord_word + sfx.get(lang," yangilik.")
-
-    if sarlavha:
-        if lang == "uz":
-            # uz-UZ-MadinaNeural LOTIN skript kutadi
-            if _is_cyr(sarlavha):
-                tts_sarlavha = _cyr2lat_uz(sarlavha)
-            elif _is_latin(sarlavha):
-                tts_sarlavha = sarlavha
-            else:
-                tts_sarlavha = _cyr2lat_uz(sarlavha)  # harholda convert
-            if tts_sarlavha:
-                text += f" {tts_sarlavha}."
-        elif lang == "ru":
-            # RU: faqat kirill → diktor o'qiydi
-            if _is_cyr(sarlavha):
-                text += f" {sarlavha}."
-            # Lotin bo'lsa — sarlavha qo'shilmaydi, faqat "Первая новость"
-        elif lang == "en":
-            if _is_latin(sarlavha):
-                text += f" {sarlavha}."
-            else:
-                text += f" {sarlavha}."   # EN uchun istalgan skript
-    return text
+    # Sarlavha QO'SHILMAYDI — jumla o'zi to'liq mazmunni o'z ichiga oladi
+    return ord_word + sfx.get(lang, " yangilik.")
 
 def build_intro_text(lang):
     return {

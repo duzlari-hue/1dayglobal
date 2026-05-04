@@ -924,13 +924,23 @@ CRITICAL: sarlavha_ru, jumla1_ru, jumla2_ru — FAQAT RUSCHA (а,б,в,г,д...)
     # ── Proper noun capitalization — isim, joy, mamlakat katta harf ──
     # Known proper nouns: har doim bosh harf (lotin va kirill)
     _PROPER_NOUNS_LAT = [
-        # ── Shaxslar (Uzbek Latin / English) ─────────────────────────
+        # ── Shaxslar — ISM + FAMILIYA (Uzbek Latin / English) ────────
+        # Ismlar (birinchi nomlar — AI ko'pincha kichik harf bilan yozadi)
+        "Donald","Joe","Boris","Vladimir","Emmanuel","Olaf","Rishi",
+        "Volodymyr","Benjamin","Bibi","Yoav","Tayyip","Recep","Fumio",
+        "Yoon","António","Antonio","Javier","Luiz","Giorgia","Ursula",
+        "Keir","Narendra","Xi","Kim","Hassan","Mohammed","Mohamed",
+        "Abdel","Fattah","Bashar","Abdalla","Abiy","Nicolás","Nicolas",
+        "Andrés","Andres","Nayib","Pedro","Alberto","Gustavo","Gabriel",
+        # Familiyalar
         "Trump","Tramp","Biden","Bayden","Putin","Zelensky","Zelenskiy",
         "Netanyahu","Netanyaxu","Macron","Makron","Modi","Scholz","Shols",
         "Starmer","Orban","Erdogan","Musk","Mask","Johnson","Sunak","Meloni",
         "Guterres","Blinken","Lavrov","Lukashenko","Aliyev","Pashinyan",
-        "Tokayev","Sinwar","Abbas","Khamenei","Xi","Jinping","Szinpin",
-        "Kim","Kishida","Zelenski","Milei","Lula","Modi","Albanese",
+        "Tokayev","Sinwar","Abbas","Khamenei","Jinping","Szinpin",
+        "Kim","Kishida","Zelenski","Milei","Lula","Albanese",
+        "Tusk","Von der Leyen","Rutte","Kallas","Merz","Scholz",
+        "Vance","Rubio","Hegseth","Waltz","Bessent",
         # ── Davlatlar ──────────────────────────────────────────────────
         "Ukraine","Ukraina","Russia","Rossiya","USA","AQSH","China","Xitoy",
         "Israel","Isroil","Iran","Eron","Iraq","Iroq","Turkey","Turkiya",
@@ -974,11 +984,18 @@ CRITICAL: sarlavha_ru, jumla1_ru, jumla2_ru — FAQAT RUSCHA (а,б,в,г,д...)
     ]
     _PROPER_NOUNS_CYR = [
         # ── Shaxslar (Russian Cyrillic) ───────────────────────────────
+        # Ismlar (RU Cyrillic)
+        "Дональд","Джо","Борис","Владимир","Эммануэль","Олаф","Риши",
+        "Владимир","Биньямин","Йоав","Реджеп","Тайип","Фумио","Юн",
+        "Антониу","Хавьер","Луис","Джорджа","Урсула","Кир","Нарендра",
+        "Хасан","Мохаммед","Абдельфаттах","Башар","Абий","Николас",
+        # Familiyalar
         "Трамп","Байден","Путин","Зеленский","Нетаньяху","Макрон","Моди",
         "Шольц","Стармер","Орбан","Эрдоган","Маск","Джонсон","Сунак",
         "Мелони","Гутерреш","Блинкен","Лавров","Лукашенко","Алиев",
         "Пашинян","Токаев","Синвар","Аббас","Хаменеи","Си","Цзиньпин",
         "Милей","Лула","Альбанезе","Ким","Мирзиёев","Назарбаев",
+        "Туск","Рютте","Каллас","Мерц","Вэнс","Рубио","Хегсет",
         # ── Davlatlar + tuslangan shakllari ──────────────────────────
         # Ukraina: Украина, Украине, Украины, Украину, Украиной
         "Украина","Украине","Украины","Украину","Украиной","Украинe",
