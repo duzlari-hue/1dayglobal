@@ -1733,14 +1733,42 @@ def _upload_to_youtube(video_path: str, title: str, description: str,
         return None
 
     # Per-til token: uz→@1kunnews, en→@1daykun, ru→@1dennews
+    # MUHIM: youtube_maker YOUTUBE/config.py dan import qilishi kerak,
+    # lekin TELEGRAM/app.py dan chaqirilganda sys.modules["config"] TELEGRAM ni ko'rsatishi mumkin.
+    # Shu sababli import oldidan YOUTUBE config ni vaqtincha o'rnatamiz.
     try:
         import sys as _sys
+        import importlib.util as _ilu
+
+        # YOUTUBE config ni to'g'ridan-to'g'ri yuklash
+        _yt_cfg_path = str(_HERE / "config.py")
+        _yt_cfg_spec = _ilu.spec_from_file_location("config", _yt_cfg_path)
+        _yt_cfg_mod  = _ilu.module_from_spec(_yt_cfg_spec)
+        _yt_cfg_spec.loader.exec_module(_yt_cfg_mod)
+
+        # Vaqtincha YOUTUBE config ni o'rnatish
+        _prev_config = _sys.modules.get("config")
+        _sys.modules["config"] = _yt_cfg_mod
+
+        # youtube_maker ni qayta yuklash (agar TELEGRAM config bilan yuklangan bo'lsa)
+        if "youtube_maker" in _sys.modules:
+            del _sys.modules["youtube_maker"]
         _sys.path.insert(0, str(_HERE))
         from youtube_maker import youtube_auth as _yt_auth
         yt = _yt_auth(lang)
+
     except Exception as e:
         log.error(f"  ❌ YouTube auth xato ({lang}): {e}")
         return None
+    finally:
+        # TELEGRAM config ni qayta tiklash (agar mavjud bo'lsa)
+        try:
+            if "_prev_config" in dir() and _prev_config is not None:
+                _sys.modules["config"] = _prev_config
+            elif "_prev_config" in dir():
+                _sys.modules.pop("config", None)
+        except Exception:
+            pass
 
     body = {
         "snippet": {
